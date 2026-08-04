@@ -23,6 +23,7 @@
   import ForeshadowsPanel from './components/ForeshadowsPanel.svelte';
   import SnapshotPanel from './components/SnapshotPanel.svelte';
   import AttachPanel from './components/AttachPanel.svelte';
+  import ResearchPanel from './components/ResearchPanel.svelte';
   import CreateWorldModal from './components/CreateWorldModal.svelte';
   import PauseModal from './components/PauseModal.svelte';
 
@@ -31,6 +32,12 @@
 
   function onCreateWorld() {
     createWorldModal.show();
+  }
+
+  // 题材研究面板"据此建世界"：把世界书方向带给建世界弹窗
+  function onResearchBuild(e) {
+    const { candidate, direction } = e.detail;
+    createWorldModal.show({ name: candidate.title, direction });
   }
 
   async function loadWorlds() {
@@ -67,10 +74,6 @@
     }, 8000);
     return () => window.removeEventListener('ws:create-world', onCreateWorld);
   });
-
-  $: if ($activeTab === 'novel' || $activeTab === 'memory' || $activeTab === 'entities') {
-    // 切换到这些 tab 时刷新
-  }
 </script>
 
 <div class="flex flex-col h-screen bg-base-200 text-base-content overflow-hidden">
@@ -90,6 +93,7 @@
     <main class="flex-1 min-w-0 overflow-y-auto bg-base-100/40">
       <div class="flex gap-2 p-5 pb-0 flex-wrap">
         {#each [
+          ['research', '🔬', '题材研究'],
           ['chronicle', '📜', '编年史'],
           ['decisions', '🎯', '决策'],
           ['novel', '📖', '小说'],
@@ -107,7 +111,9 @@
         {/each}
       </div>
       <div class="p-5">
-        {#if $activeTab === 'chronicle'}
+        {#if $activeTab === 'research'}
+          <ResearchPanel on:build={onResearchBuild} />
+        {:else if $activeTab === 'chronicle'}
           <ChroniclePanel />
         {:else if $activeTab === 'decisions'}
           <DecisionsPanel />

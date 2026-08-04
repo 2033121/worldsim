@@ -29,9 +29,12 @@ import (
 	"worldsim/internal/httpapi"
 	"worldsim/internal/llm"
 	"worldsim/internal/novel"
+	"worldsim/internal/prompt"
+	"worldsim/internal/research"
 	"worldsim/internal/search"
 	"worldsim/internal/sim"
 	"worldsim/internal/sse"
+	"worldsim/internal/themes"
 	"worldsim/internal/worldbook"
 )
 
@@ -72,6 +75,12 @@ func main() {
 	// ---------- 联网搜索（阶段2）：配置了 search.json 即给所有 LLM 客户端挂上 web_search 工具 ----------
 	initSearchTools(progDir)
 
+	// ---------- 题材研究智能体（热门题材研究 / 主题规划 / 世界书方向产出） ----------
+	// 提示词外置（wsdata/prompts 可热调优）+ 题材卡片存储（wsdata/themes）+ 研究方案存档（wsdata/research）
+	promptLoader := prompt.New(filepath.Join(progDir, "prompts"))
+	themeStore := themes.Load(filepath.Join(progDir, "themes"))
+	researchAgent := research.NewAgent(apiCfg, webSearchTools, themeStore, promptLoader, filepath.Join(progDir, "research"))
+
 	// ---------- 启动小说化服务（48090） ----------
 	logger := sse.NewLogBroadcaster()
 	defer logger.Close()
@@ -84,7 +93,7 @@ func main() {
 	fmt.Printf(" [系统] 小说创作服务已启动: http://localhost%s\n", storyPort)
 
 	// ---------- 启动世界模拟服务（48091） ----------
-	go startWorldServer(worldDir, apiCfg)
+	go startWorldServer(worldDir, apiCfg, researchAgent)
 	fmt.Printf(" [系统] 世界模拟服务已启动: http://localhost%s\n", worldPort)
 
 	fmt.Printf(" [系统] 程序目录: %s\n", progDir)
@@ -163,8 +172,8 @@ type worldInstance struct {
 
 func (w *worldInstance) ready() bool { return w != nil && w.engine != nil }
 
-func startWorldServer(worldDir string, apiCfg *config.APIConfig) {
-	ws := &worldServer{baseDir: worldDir, apiCfg: apiCfg, worlds: map[string]*worldInstance{}}
+func startWorldServer(worldDir string, apiCfg *config.APIConfig, ra *research.Agent) {
+	ws := &worldServer{baseDir: worldDir, apiCfg: apiCfg, worlds: map[string]*worldInstance{}, research: ra}
 	ws.scanWorlds()
 
 	mux := http.NewServeMux()
@@ -194,6 +203,13 @@ func startWorldServer(worldDir string, apiCfg *config.APIConfig) {
 	mux.HandleFunc("GET /api/world/attach", ws.handleAttachList)
 	mux.HandleFunc("DELETE /api/world/attach/{name}", ws.handleAttachDelete)
 	mux.HandleFunc("GET /api/world/attach/refs", ws.handleAttachRefs)
+
+	// 题材研究智能体：发起研究 / 历史方案 / 存卡片 / 生成方向
+	mux.HandleFunc("POST /api/research", ws.handleResearch)
+	mux.HandleFunc("GET /api/research/proposals", ws.handleResearchProposals)
+	mux.HandleFunc("POST /api/research/{id}/direction", ws.handleResearchDirection)
+	mux.HandleFunc("POST /api/research/{id}/save-card", ws.handleResearchSaveCard)
+	mux.HandleFunc("GET /api/research/{id}", ws.handleResearchGet)
 
 	// 系统状态（联网搜索是否启用等）
 	mux.HandleFunc("GET /api/system/status", ws.handleSystemStatus)
@@ -242,6 +258,7 @@ type worldServer struct {
 	worlds  map[string]*worldInstance
 	current string // 当前世界名
 	apiCfg  *config.APIConfig
+	research *research.Agent // 题材研究智能体（热门题材研究/主题规划/世界书方向产出）
 	novelMu sync.Mutex // 小说生成防重入锁（并发请求会写重复章号）
 
 	loopMu      sync.Mutex    // 后台持续运行控制
@@ -690,14 +707,186 @@ func (ws *worldServer) handleAttachRefs(w http.ResponseWriter, r *http.Request) 
 // GET /api/system/status — 系统能力状态（联网搜索是否启用）
 func (ws *worldServer) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
 	ws.writeJSON(w, 200, map[string]any{
-		"search_enabled": webSearchTools != nil && len(webSearchTools.Schemas()) > 0,
+		"search_enabled":    webSearchTools != nil && len(webSearchTools.Schemas()) > 0,
+		"research_enabled":  ws.research != nil,
+		"theme_cards":       ws.themeCardIDs(),
 	})
+}
+
+// themeCardIDs 返回已加载题材卡片 id 列表（供前端"沉淀卡片"提示）。
+func (ws *worldServer) themeCardIDs() []string {
+	// 研究智能体未暴露出卡片列表，从卡片文件目录扫描（wsdata/themes）
+	dir := filepath.Join(ws.baseDir, "..", "themes")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return []string{}
+	}
+	ids := []string{}
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(strings.ToLower(e.Name()), ".json") {
+			ids = append(ids, strings.TrimSuffix(e.Name(), ".json"))
+		}
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 func (ws *worldServer) writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(v)
+}
+
+// ---------- 题材研究智能体 HTTP 端点 ----------
+
+// researchEnabled 判断研究智能体是否可用。
+func (ws *worldServer) researchEnabled() bool {
+	return ws.research != nil
+}
+
+// researchRefs 收集研究参考素材：优先用显式传入的，否则用当前世界附件聚合。
+func (ws *worldServer) researchRefs(explicit string) string {
+	if strings.TrimSpace(explicit) != "" {
+		return explicit
+	}
+	if inst := ws.inst(); inst != nil {
+		return inst.attachRefs()
+	}
+	return ""
+}
+
+// POST /api/research — 发起题材研究（热门题材研究/主题规划）
+// body: {"input":"用户想法","refs":"附件聚合文本(可选，缺省用当前世界附件)"}
+// 返回：{"ok":true,"record_id":"...","proposal":"..."}
+func (ws *worldServer) handleResearch(w http.ResponseWriter, r *http.Request) {
+	if !ws.researchEnabled() {
+		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": "研究智能体未初始化"})
+		return
+	}
+	var req struct {
+		Input string `json:"input"`
+		Refs  string `json:"refs"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Input) == "" {
+		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": "需要 input 字段（一句话想法）"})
+		return
+	}
+	refs := ws.researchRefs(req.Refs)
+	// 独立 context（长任务不随 HTTP 请求取消）+ 长超时（多轮搜索）
+	rctx, cancel := context.WithTimeout(context.Background(), 360*time.Second)
+	defer cancel()
+	fmt.Printf(" [研究] 发起题材研究：%s（refs=%d字, search=%v）\n", req.Input, len(refs), ws.research.SearchEnabled())
+	proposal, err := ws.research.RunComparison(rctx, req.Input, refs)
+	if err != nil {
+		ws.writeJSON(w, 502, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	// 存档（供建世界引用）
+	rec := &research.ProposalRecord{Input: req.Input, Proposal: proposal}
+	if serr := ws.research.SaveProposal(rec); serr != nil {
+		fmt.Printf(" [研究] 存档失败: %v\n", serr)
+	}
+	fmt.Printf(" [研究] 研究完成：%d 个候选，推荐=%s\n", len(proposal.Candidates), proposal.RecommendedID)
+	ws.writeJSON(w, 200, map[string]any{"ok": true, "record_id": rec.ID, "proposal": proposal})
+}
+
+// GET /api/research/proposals — 历史研究方案列表（最新在前）
+func (ws *worldServer) handleResearchProposals(w http.ResponseWriter, r *http.Request) {
+	if !ws.researchEnabled() {
+		ws.writeJSON(w, 200, map[string]any{"proposals": []research.ProposalRecord{}})
+		return
+	}
+	ws.writeJSON(w, 200, map[string]any{"proposals": ws.research.ListProposals()})
+}
+
+// GET /api/research/{id} — 读取单个研究方案完整记录
+func (ws *worldServer) handleResearchGet(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	rec, err := ws.research.LoadProposal(id)
+	if err != nil {
+		ws.writeJSON(w, 404, map[string]any{"ok": false, "error": "研究方案不存在: " + id})
+		return
+	}
+	ws.writeJSON(w, 200, rec)
+}
+
+// findCandidate 从方案中按 id/序号定位候选。
+func findCandidate(rec *research.ProposalRecord, id string) *research.Candidate {
+	if rec == nil || rec.Proposal == nil {
+		return nil
+	}
+	for i := range rec.Proposal.Candidates {
+		if rec.Proposal.Candidates[i].ID == id {
+			return &rec.Proposal.Candidates[i]
+		}
+	}
+	return nil
+}
+
+// POST /api/research/{id}/direction — 基于某候选生成世界书方向（建世界蓝本）
+// body: {"candidate_id":"c1"}
+func (ws *worldServer) handleResearchDirection(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	rec, err := ws.research.LoadProposal(id)
+	if err != nil {
+		ws.writeJSON(w, 404, map[string]any{"ok": false, "error": "研究方案不存在: " + id})
+		return
+	}
+	var req struct {
+		CandidateID string `json:"candidate_id"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	cand := findCandidate(rec, req.CandidateID)
+	if cand == nil {
+		ws.writeJSON(w, 404, map[string]any{"ok": false, "error": "候选题材不存在: " + req.CandidateID})
+		return
+	}
+	refs := ws.researchRefs("")
+	rctx, cancel := context.WithTimeout(context.Background(), 360*time.Second)
+	defer cancel()
+	direction, derr := ws.research.BuildDirection(rctx, *cand, refs)
+	if derr != nil {
+		ws.writeJSON(w, 502, map[string]any{"ok": false, "error": derr.Error()})
+		return
+	}
+	rec.Direction = direction
+	_ = ws.research.SaveProposal(rec)
+	ws.writeJSON(w, 200, map[string]any{"ok": true, "direction": direction, "candidate": cand})
+}
+
+// POST /api/research/{id}/save-card — 把某候选沉淀为题材卡片（写入 wsdata/themes/{id}.json）
+// body: {"candidate_id":"c1"}
+func (ws *worldServer) handleResearchSaveCard(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	rec, err := ws.research.LoadProposal(id)
+	if err != nil {
+		ws.writeJSON(w, 404, map[string]any{"ok": false, "error": "研究方案不存在: " + id})
+		return
+	}
+	var req struct {
+		CandidateID string `json:"candidate_id"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	cand := findCandidate(rec, req.CandidateID)
+	if cand == nil {
+		ws.writeJSON(w, 404, map[string]any{"ok": false, "error": "候选题材不存在: " + req.CandidateID})
+		return
+	}
+	rctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
+	defer cancel()
+	card, cerr := ws.research.BuildThemeCard(rctx, *cand)
+	if cerr != nil {
+		ws.writeJSON(w, 502, map[string]any{"ok": false, "error": cerr.Error()})
+		return
+	}
+	if serr := ws.research.SaveCard(card); serr != nil {
+		ws.writeJSON(w, 500, map[string]any{"ok": false, "error": serr.Error()})
+		return
+	}
+	rec.ThemeCard = card
+	_ = ws.research.SaveProposal(rec)
+	fmt.Printf(" [研究] 题材卡片已沉淀：%s（%s）\n", card.ID, card.Name)
+	ws.writeJSON(w, 200, map[string]any{"ok": true, "card": card})
 }
 
 // GET /api/world/state — 查看世界状态（旁观权限，§16.1）
@@ -1109,6 +1298,8 @@ func (ws *worldServer) handleWorldCreate(w http.ResponseWriter, r *http.Request)
 		Worldbook string `json:"worldbook"` // 世界书名（worldbooks/ 池），可选
 		Theme     string `json:"theme"`     // 主题包名（worldbooks/themes/ 池），可选
 		Desc      string `json:"desc"`      // 一句话设定（theme 模式用）
+		ResearchID string `json:"research_id"` // 研究方案 id（研究结果引导建世界），可选
+		WorldbookDirection string `json:"worldbook_direction"` // 直接传世界书方向 markdown，可选
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Name) == "" {
 		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": "需要 name 字段"})
@@ -1159,6 +1350,42 @@ func (ws *worldServer) handleWorldCreate(w http.ResponseWriter, r *http.Request)
 				fmt.Printf(" [世界模拟] 世界书已生成（主题包：%s）：%s\n", req.Theme, name)
 			} else {
 				fmt.Printf(" [世界模拟] 世界书生成失败（3次重试后），回退模板\n")
+			}
+		}
+	}
+	// 研究结果引导模式：用"世界书方向"（研究智能体产物）作为蓝本生成完整世界书
+	// 优先级：直接传的 worldbook_direction > research_id 存档里的 direction
+	if wbName == "" && req.Theme == "" {
+		direction := req.WorldbookDirection
+		if strings.TrimSpace(direction) == "" && req.ResearchID != "" && ws.research != nil {
+			if rec, err := ws.research.LoadProposal(req.ResearchID); err == nil {
+				direction = rec.Direction
+			}
+		}
+		if strings.TrimSpace(direction) != "" {
+			desc := req.Desc
+			if desc == "" {
+				desc = "按这份世界书方向的设定，生成一个有生活质感、主角从最底层逐步成长的世界。"
+			}
+			var wbText string
+			for attempt := 0; attempt < 3; attempt++ {
+				genCtx, genCancel := context.WithTimeout(context.Background(), 600*time.Second)
+				var gerr error
+				wbText, gerr = worldbook.GenWorldbookLLM(genCtx, ws.apiCfg, direction, desc)
+				genCancel()
+				if gerr == nil && strings.TrimSpace(wbText) != "" {
+					break
+				}
+				fmt.Printf(" [世界模拟] 世界书生成第%d次失败(%v)，重试…\n", attempt+1, gerr)
+				time.Sleep(3 * time.Second)
+			}
+			if strings.TrimSpace(wbText) != "" {
+				wbText = worldbook.TrimWorldbook(wbText)
+				_ = os.WriteFile(filepath.Join(ws.baseDir, "..", "worldbooks", name+".md"), []byte(wbText), 0644)
+				wbName = name
+				fmt.Printf(" [世界模拟] 世界书已生成（研究结果引导）：%s\n", name)
+			} else {
+				fmt.Printf(" [世界模拟] 世界书生成失败（研究结果引导，3次重试后）\n")
 			}
 		}
 	}
