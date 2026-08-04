@@ -11,9 +11,6 @@ storys/
 run.log
 *.log
 
-# ===== 素材库（版权：从网文提取的风格示范，不入库）=====
-material/
-
 # ===== 构建产物 =====
 worldsim
 worldsim_new
