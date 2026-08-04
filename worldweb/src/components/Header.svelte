@@ -1,6 +1,14 @@
 <script>
+  import { onMount } from 'svelte';
   import { j } from '../lib/api.js';
   import { worlds, currentWorld, refreshAll, toast, worldState } from '../lib/stores.js';
+
+  let searchEnabled = false;
+
+  onMount(async () => {
+    const d = await j('/api/system/status');
+    if (d && typeof d.search_enabled === 'boolean') searchEnabled = d.search_enabled;
+  });
 
   async function selectWorld(name) {
     if (!name) return;
@@ -57,5 +65,8 @@
   </div>
 
   <div class="flex-1"></div>
+  {#if searchEnabled}
+    <span class="badge badge-sm badge-success gap-1" title="已配置联网搜索（SearXNG），Agent 可调用 web_search">🔎 联网搜索</span>
+  {/if}
   <button class="btn btn-ghost btn-sm gap-1" on:click={refreshAll}>↻ 刷新</button>
 </header>

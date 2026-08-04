@@ -195,6 +195,9 @@ func startWorldServer(worldDir string, apiCfg *config.APIConfig) {
 	mux.HandleFunc("DELETE /api/world/attach/{name}", ws.handleAttachDelete)
 	mux.HandleFunc("GET /api/world/attach/refs", ws.handleAttachRefs)
 
+	// 系统状态（联网搜索是否启用等）
+	mux.HandleFunc("GET /api/system/status", ws.handleSystemStatus)
+
 	// 控制台：主题包列表 / 世界书 / 伏笔 / 后台循环
 	mux.HandleFunc("GET /api/worldbooks/themes", ws.handleThemesList)
 	mux.HandleFunc("GET /api/world/worldbook", ws.handleGetWorldbook)
@@ -682,6 +685,13 @@ func (ws *worldServer) handleAttachRefs(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	ws.writeJSON(w, 200, map[string]any{"refs": inst.attachRefs()})
+}
+
+// GET /api/system/status — 系统能力状态（联网搜索是否启用）
+func (ws *worldServer) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
+	ws.writeJSON(w, 200, map[string]any{
+		"search_enabled": webSearchTools != nil && len(webSearchTools.Schemas()) > 0,
+	})
 }
 
 func (ws *worldServer) writeJSON(w http.ResponseWriter, code int, v any) {
