@@ -1,7 +1,6 @@
 // Package novel 实现 WorldSim 的小说化联通（设计文档 §8/§9.10）：
-//
-//	编年史（FACT/SAID/STATE）+ 主角内心 → 小说章节 → 全书导出
-//	核心原则：素材全部转化为叙事（对话化/场景化/心理化），限知视角不剧透。
+//   编年史（FACT/SAID/STATE）+ 主角内心 → 小说章节 → 全书导出
+//   核心原则：素材全部转化为叙事（对话化/场景化/心理化），限知视角不剧透。
 package novel
 
 import (
@@ -24,36 +23,36 @@ import (
 // ---------- 章节计划 ----------
 
 type ChapterPlan struct {
-	Num      int    `json:"num"`
-	Title    string `json:"title"`
-	DayStart int    `json:"day_start"`
-	DayEnd   int    `json:"day_end"`
-	Days     []int  `json:"days"`
-	Status   string `json:"status"` // pending | done
-	Path     string `json:"path,omitempty"`
+	Num      int      `json:"num"`
+	Title    string   `json:"title"`
+	DayStart int      `json:"day_start"`
+	DayEnd   int      `json:"day_end"`
+	Days     []int    `json:"days"`
+	Status   string   `json:"status"` // pending | done
+	Path     string   `json:"path,omitempty"`
 }
 
 // Writer 小说化写手（把模拟成果写成可阅读的小说）
 type Writer struct {
 	APICfg     *config.APIConfig
 	BookTitle  string
-	BookDir    string // storys/{书名}/chapters/
+	BookDir    string          // storys/{书名}/chapters/
 	WB         *worldbook.Worldbook
-	DaysPerCh  int           // 每章包含的模拟天数（默认3）
-	ChapterLen string        // 章节字数档位：short(1500) | normal(2500) | long(4000)
-	Material   *MaterialBank // 描写素材库（真人大神示范，825条）
-	HeroName   string        // 主角名（写手必须用模拟主角名，不得自造）
+	DaysPerCh  int             // 每章包含的模拟天数（默认3）
+	ChapterLen string          // 章节字数档位：short(1500) | normal(2500) | long(4000)
+	Material   *MaterialBank   // 描写素材库（真人大神示范，825条）
+	HeroName   string          // 主角名（写手必须用模拟主角名，不得自造）
 	// 跨章记忆（长文一致性：每章独立请求，靠注入"前情提要+伏笔"防遗忘/防断头）
 	PrevSummary string // 前面所有章节的一句话摘要（累积，最近优先）
 	Foreshadows string // 未回收伏笔清单（模拟层伏笔账本，写手可推进/回收）
-	Decisions   string // 本章涉及剧情岔口与已定方向（用户改选优先，否则 AI 代决；写手必须照此方向写）
+	Decisions  string // 本章涉及剧情岔口与已定方向（用户改选优先，否则 AI 代决；写手必须照此方向写）
 }
 
 // NewWriter 创建小说化写手
 func NewWriter(apiCfg *config.APIConfig, bookTitle, bookDir string, wb *worldbook.Worldbook, heroName string) *Writer {
 	os.MkdirAll(filepath.Join(bookDir, "chapters"), 0755)
 	// 素材库：程序目录 material/（可放自定义素材）
-	materialDir := filepath.Join(bookDir, "..", "..", "material")
+materialDir := filepath.Join(bookDir, "..", "..", "material")
 	return &Writer{
 		APICfg:     apiCfg,
 		BookTitle:  bookTitle,
@@ -276,7 +275,7 @@ func (w *Writer) WriteChapter(ctx context.Context, p ChapterPlan, chronicle []si
    · 【场景素材】→ 完整场景，写足戏剧张力
    · 【背景素材】→ 章首一句过渡带过（"这段时间，日子照旧，但有些东西在变"），**严禁展开成完整场景**
    · 没有任何事发生的时段 → **直接跳过**，不要为凑字数写流水账
-   · 宁可章节稍短，也不要注水；平淡章写短，高潮章写足`
+   · 宁可章节稍短，也不要注水；平淡章写短，高潮章写足` + sim.WritingCraftSkills()
 
 	// 跨章记忆注入：前情提要（防遗忘）+ 未回收伏笔（防断头）
 	if w.PrevSummary != "" {
@@ -300,11 +299,11 @@ func (w *Writer) WriteChapter(ctx context.Context, p ChapterPlan, chronicle []si
 	}
 
 	// 素材库注入：抽真实网文段落当"形态示范"（学段落长短/对话节奏/动作推进，禁止抄袭）
-	if w.Material != nil {
-		if ref := w.Material.PickFor(material, 3, 8); ref != "" {
-			system += "\n\n" + ref
-		}
+if w.Material != nil {
+	if ref := w.Material.PickFor(material, 3, 8); ref != "" {
+		system += "\n\n" + ref
 	}
+}
 
 	// user 末尾强制指令：直接写正文（思考走模型自带 reasoning 通道，自动另存）
 	material = strings.TrimSpace(material) + "\n\n【最后指令】现在直接写第" + fmt.Sprintf("%d", p.Num) + "章正文。第一行写'第" + fmt.Sprintf("%d", p.Num) + "章·标题'——标题必须是你起的网文章节名（要有悬念/冲突/画面感，2~8个字，禁止用素材条目名如'街坊议论：xx'）。然后写正文，正文结束另起一行写【本章摘要】。"
@@ -400,7 +399,6 @@ func splitSummary(text string) (notes, body, summary string) {
 	body = strings.TrimSpace(text)
 	return "", body, summary
 }
-
 // saveNotes 创作思路存盘（notes.jsonl，AI构思过程，不属于正文）
 func (w *Writer) saveNotes(p ChapterPlan, notes string) {
 	notesPath := filepath.Join(w.BookDir, "notes.jsonl")
@@ -480,12 +478,10 @@ func truncateRunes(s string, n int) string {
 }
 
 // buildChapterMaterial 剪辑层：按戏剧权重把本章编年史剪成"剧本包"（导演剪辑，不是素材堆）
-//
-//	【本章焦点】tags 统计主线（谁在追什么/什么伏笔该收）——写手先知道本章任务
-//	【场景素材】weight≥0.55 或对话/主角内心：按天原样给（本章血肉，完整场景）
-//	【背景素材】0.3≤weight<0.55（时间过渡/状态变化/涟漪）：压缩成"这段时间的变化"（章首时光流转）
-//	【时间流逝】<0.3 或空天：一行带过（不喂进 prompt）
-//
+//   【本章焦点】tags 统计主线（谁在追什么/什么伏笔该收）——写手先知道本章任务
+//   【场景素材】weight≥0.55 或对话/主角内心：按天原样给（本章血肉，完整场景）
+//   【背景素材】0.3≤weight<0.55（时间过渡/状态变化/涟漪）：压缩成"这段时间的变化"（章首时光流转）
+//   【时间流逝】<0.3 或空天：一行带过（不喂进 prompt）
 // token 控制：只喂高权重场景 + 背景压缩，砍掉 79% 的 STATE 水条目
 func (w *Writer) buildChapterMaterial(p ChapterPlan, chronicle []sim.ChronicleEntry, thinkings map[int]string) string {
 	daySet := map[int]bool{}

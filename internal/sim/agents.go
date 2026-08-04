@@ -296,7 +296,7 @@ func EventGenLLM(ctx context.Context, c *LLMClient, st *engine.WorldState, wb *w
 11. 未揭示的世界深处（只有风声/线索，还没浮出水面）：
 ` + unrevealedHints + `
    ——它们真实存在、在暗中运转，但你只能让主角"偶然碰到线索"（一个细节、一句怪话、一件怪事），不能揭示全貌；当事件真的撞上某个线索时，那层真相才可能浮出水面（revelation 类型事件）。
-12. 幸运/小概率：` + luckHint + `——若提示"今日有幸运倾向"，至少生成一个 luck 类型事件（意外的惊喜）；若无提示，也可以偶尔让平淡日子里冒出一个小概率巧合（既非刻意也非注定）。`
+12. 幸运/小概率：` + luckHint + `——若提示"今日有幸运倾向"，至少生成一个 luck 类型事件（意外的惊喜）；若无提示，也可以偶尔让平淡日子里冒出一个小概率巧合（既非刻意也非注定）。` + EventDesignSkills()
 
 	arcBlock := ""
 	if strings.TrimSpace(arcPlan) != "" {
