@@ -17,8 +17,9 @@ import (
 // ---------- LLM 客户端（包装 internal/llm，带 Mock 调试模式） ----------
 
 type LLMClient struct {
-	Cfg  *config.APIConfig
-	Mock func(system, user string) string // 非 nil 时走本地模拟（无 API 时调试链路）
+	Cfg   *config.APIConfig
+	Mock  func(system, user string) string // 非 nil 时走本地模拟（无 API 时调试链路）
+	Tools *llm.ToolRegistry                // 非空且注册了工具时，CompleteTier 走工具调用（function calling）
 }
 
 // Complete 用默认模型调用（normal 档位）
@@ -41,6 +42,14 @@ func (c *LLMClient) CompleteTier(ctx context.Context, tier, system, user string)
 	// 每步 LLM 调用加 150s 硬超时：中转站偶发挂起时快速失败→上层 fallback，不卡死模拟循环
 	callCtx, cancel := context.WithTimeout(ctx, 150*time.Second)
 	defer cancel()
+	// 已注册工具（如联网搜索）时走 function calling 往返；否则保持原同步路径
+	if c.Tools != nil && len(c.Tools.Schemas()) > 0 {
+		cfg := c.Cfg
+		if tier != "" && c.Cfg.TierModel(tier) != c.Cfg.Model {
+			cfg = c.Cfg.TieredConfig(tier)
+		}
+		return llm.CallAPITools(callCtx, cfg, system, []llm.Message{{Role: "user", Content: user}}, c.Tools, nil)
+	}
 	return llm.CallAPITierSync(callCtx, c.Cfg, tier, system, user)
 }
 

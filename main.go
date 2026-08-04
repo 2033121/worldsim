@@ -27,6 +27,7 @@ import (
 	"worldsim/internal/httpapi"
 	"worldsim/internal/llm"
 	"worldsim/internal/novel"
+	"worldsim/internal/search"
 	"worldsim/internal/sim"
 	"worldsim/internal/sse"
 	"worldsim/internal/worldbook"
@@ -66,6 +67,9 @@ func main() {
 		fmt.Println(" [系统] 检测到空白API配置，已自动生成 api.json（请在 Web UI 配置）")
 	}
 
+	// ---------- 联网搜索（阶段2）：配置了 search.json 即给所有 LLM 客户端挂上 web_search 工具 ----------
+	initSearchTools(progDir)
+
 	// ---------- 启动小说化服务（48090） ----------
 	logger := sse.NewLogBroadcaster()
 	defer logger.Close()
@@ -86,6 +90,38 @@ func main() {
 	fmt.Printf(" [系统] 世界模拟目录: %s\n", worldDir)
 
 	select {} // 阻塞主协程
+}
+
+// webSearchTools 全局联网搜索工具注册表：配置了 wsdata/search.json 即非 nil，
+// 所有 LLMClient（小说/世界模拟）都会挂上 web_search 工具。
+var webSearchTools *llm.ToolRegistry
+
+// initSearchTools 从 baseDir/search.json 加载联网搜索配置并初始化工具注册表。
+// 文件不存在或未启用则静默跳过（不影响原有功能）。
+func initSearchTools(baseDir string) {
+	cfg, err := search.LoadConfig(filepath.Join(baseDir, "search.json"))
+	if err != nil {
+		fmt.Printf(" ⚠️ [搜索] 加载配置失败: %v\n", err)
+		return
+	}
+	if cfg == nil || !cfg.Enabled {
+		fmt.Println(" [搜索] 未启用（缺少 wsdata/search.json 或 enabled=false）")
+		return
+	}
+	prov, err := search.NewProvider(cfg)
+	if err != nil {
+		fmt.Printf(" ⚠️ [搜索] 后端初始化失败: %v\n", err)
+		return
+	}
+	reg := llm.NewToolRegistry()
+	search.RegisterWebSearch(reg, prov, cfg.MaxResults)
+	webSearchTools = reg
+	fmt.Printf(" [搜索] 已启用 %s @ %s（最大 %d 条/次）\n", prov.Name(), cfg.SearxngURL, cfg.MaxResults)
+}
+
+// newLLMClient 构造带（可选）联网搜索工具的 LLMClient。
+func newLLMClient(cfg *config.APIConfig) *sim.LLMClient {
+	return &sim.LLMClient{Cfg: cfg, Tools: webSearchTools}
 }
 
 func resolveProgDir() string {
@@ -543,12 +579,12 @@ func (ws *worldServer) autoEnableLLM(w *worldInstance) {
 	if ws.apiCfg == nil || ws.apiCfg.BaseURL == "" || ws.apiCfg.Model == "" {
 		return
 	}
-	w.llm = &sim.LLMClient{Cfg: &config.APIConfig{
+	w.llm = newLLMClient(&config.APIConfig{
 		BaseURL:    ws.apiCfg.BaseURL,
 		Model:      ws.apiCfg.Model,
 		APIKey:     ws.apiCfg.APIKey,
 		ModelTiers: ws.apiCfg.ModelTiers,
-	}}
+	})
 	w.applyLLM()
 }
 
@@ -871,12 +907,12 @@ func (ws *worldServer) handleSetLLM(w http.ResponseWriter, r *http.Request) {
 				"premium": "deepseek-v4-pro",
 			}
 		}
-		inst.llm = &sim.LLMClient{Cfg: &config.APIConfig{
+		inst.llm = newLLMClient(&config.APIConfig{
 			BaseURL:    req.BaseURL,
 			Model:      req.Model,
 			APIKey:     req.APIKey,
 			ModelTiers: tiers,
-		}}
+		})
 		// 持久化到 api.json（重启后小说/模拟分层不丢）
 		if b, err := json.MarshalIndent(inst.llm.Cfg, "", "  "); err == nil {
 			_ = os.WriteFile(filepath.Join(ws.baseDir, "..", "api.json"), b, 0644)

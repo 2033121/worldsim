@@ -24,3 +24,15 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  # 联网搜索后端（SearXNG 自托管）——worldsim 的 web_search 工具通过容器内 http://searxng:8080 调用
+  searxng:
+    image: searxng/searxng
+    container_name: searxng
+    restart: unless-stopped
+    ports:
+      - "8888:8080"   # 宿主机访问 http://localhost:8888
+    volumes:
+      - ./wsdata/searxng:/etc/searxng
+    environment:
+      - TZ=Asia/Shanghai
