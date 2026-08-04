@@ -807,7 +807,8 @@ func (ws *worldServer) handleSimDay(w http.ResponseWriter, r *http.Request) {
 	}
 	results := []*sim.DayResult{}
 	// 独立 context：客户端断开（宿主 http_request 超时）不影响模拟继续完成
-	runCtx, runCancel := context.WithTimeout(context.Background(), time.Duration(req.Days)*170*time.Second)
+	// 单日模拟含 事件生成+GM规划+世界推进+主角决策+NPC对话+角色档案(并行) ≈ 4~6 分钟
+	runCtx, runCancel := context.WithTimeout(context.Background(), time.Duration(req.Days)*600*time.Second)
 	defer runCancel()
 	for i := 0; i < req.Days; i++ {
 		res, err := inst.sim.RunDay(runCtx)
@@ -1035,9 +1036,10 @@ func (ws *worldServer) handleWorldCreate(w http.ResponseWriter, r *http.Request)
 				desc = "按主题包的典型设定生成一个有生活质感的世界（主角从最底层开始，逐步成长）"
 			}
 			// 独立 context（不随 HTTP 请求取消）+ 重试3次（中转站长请求偶发 connection reset）
+			// 240s→600s：推理模型生成完整世界书（数万字）常需 4~6 分钟，240s 会误判超时
 			var wbText string
 			for attempt := 0; attempt < 3; attempt++ {
-				genCtx, genCancel := context.WithTimeout(context.Background(), 240*time.Second)
+				genCtx, genCancel := context.WithTimeout(context.Background(), 600*time.Second)
 				var gerr error
 				wbText, gerr = worldbook.GenWorldbookLLM(genCtx, ws.apiCfg, string(themeContent), desc)
 				genCancel()

@@ -8,6 +8,7 @@ credentials*
 # ===== 运行时数据（个人世界数据，不入库）=====
 worlds/
 storys/
+wsdata/
 run.log
 *.log
 

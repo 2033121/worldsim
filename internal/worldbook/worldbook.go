@@ -323,6 +323,43 @@ func (w *Worldbook) ForWorldAgent() string {
 	return sb.String()
 }
 
+// ForGM 总导演视角：完整世界背景（GM 是唯一知情人，规划剧情段落需掌握全量设定）
+func (w *Worldbook) ForGM() string {
+	var sb strings.Builder
+	sb.WriteString("【世界背景（你是总导演，唯一知情人，规划剧情段落用）】\n")
+	if w.A1Worldview != "" {
+		sb.WriteString("A1 世界观：\n" + w.A1Worldview + "\n")
+	}
+	if w.A2Physics != "" {
+		sb.WriteString("A2 规则：\n" + w.A2Physics + "\n")
+	}
+	if w.A3Society != "" {
+		sb.WriteString("A3 社会结构：\n" + w.A3Society + "\n")
+	}
+	if w.A5Factions != "" {
+		sb.WriteString("A5 势力：\n" + w.A5Factions + "\n")
+	}
+	if w.A6GoalChain != "" {
+		sb.WriteString("A6 主角目标链（驱动主角行动）：\n" + w.A6GoalChain + "\n")
+	}
+	if w.A7PowerSys != "" {
+		sb.WriteString("A7 能力成长体系（金手指节奏规划用）：\n" + w.A7PowerSys + "\n")
+	}
+	if w.A8Villain != "" {
+		sb.WriteString("A8 反派行动线（反派要持续施压）：\n" + w.A8Villain + "\n")
+	}
+	if w.B1Secrets != "" {
+		sb.WriteString("B1 世界秘密（绝不泄露给角色）：\n" + w.B1Secrets + "\n")
+	}
+	if w.B3ArcPlan != "" {
+		sb.WriteString("B3 全书弧线建议（导演意图）：\n" + w.B3ArcPlan + "\n")
+	}
+	if w.B4Foreshadows != "" {
+		sb.WriteString("B4 伏笔清单（规划段落时推进/回收）：\n" + w.B4Foreshadows + "\n")
+	}
+	return sb.String()
+}
+
 // ForEventAgent 事件 Agent 视角：A + 事件类型池 + 事件谱（本世界弹药库）
 func (w *Worldbook) ForEventAgent() string {
 	var sb strings.Builder

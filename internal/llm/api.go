@@ -168,7 +168,7 @@ func FetchModelContextWindow(apiCfg *config.APIConfig) int {
 		req.Header.Set("Authorization", "Bearer "+apiCfg.APIKey)
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := llmHTTPClient(10 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0
@@ -326,7 +326,7 @@ func CallAPIMessagesSync(ctx context.Context, apiCfg *config.APIConfig, messages
 	}
 
 	timeout := time.Duration(apiCfg.HTTPTimeoutSeconds) * time.Second
-	client := &http.Client{Timeout: timeout}
+	client := llmHTTPClient(timeout)
 	resp, err := client.Do(req)
 	if err != nil {
 		return CompletionResult{}, err
@@ -455,6 +455,20 @@ func CallAPIStream(ctx context.Context, apiCfg *config.APIConfig, system, user s
 }
 
 // CallAPIStreamMessages 以完整的多轮消息数组调用 API（流式）。
+// llmHTTPClient 构造保守的 HTTP 客户端：强制 HTTP/1.1 + 禁用连接复用，
+// 兼容阿里云 SLB 等对 Go 默认 Transport（HTTP/2 + keep-alive）支持不佳的上游。
+func llmHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			ForceAttemptHTTP2:  false,
+			DisableKeepAlives:  true,
+			MaxIdleConns:       1,
+			MaxIdleConnsPerHost: 1,
+		},
+	}
+}
+
 func CallAPIStreamMessages(ctx context.Context, apiCfg *config.APIConfig, messages []Message, onChunk func(string)) (res CompletionResult, err error) {
 	llmSem <- struct{}{} // 全局并发闸门：限制同时打到中转站的请求数，防止并行 Agent 调用打爆上游
 	defer func() { <-llmSem }()
@@ -491,7 +505,7 @@ func CallAPIStreamMessages(ctx context.Context, apiCfg *config.APIConfig, messag
 	}
 
 	timeout := time.Duration(apiCfg.HTTPTimeoutSeconds) * time.Second
-	client := &http.Client{Timeout: timeout}
+	client := llmHTTPClient(timeout)
 	resp, err := client.Do(req)
 	if err != nil {
 		return CompletionResult{}, err

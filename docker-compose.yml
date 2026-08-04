@@ -1,0 +1,26 @@
+# WorldSim Docker Compose — 一键部署
+# 启动：docker compose up -d --build
+# 停止：docker compose down
+# 查看日志：docker compose logs -f
+services:
+  worldsim:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: worldsim:local
+    container_name: worldsim
+    restart: unless-stopped
+    ports:
+      - "48091:48091"   # 世界模拟 WebUI
+      - "48090:48090"   # 小说创作服务
+    volumes:
+      # 数据目录（api.json / worlds / worldbooks / storys 全在这里）
+      - ./wsdata:/app/wsdata
+    environment:
+      - TZ=Asia/Shanghai
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:48091/api/worlds"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
