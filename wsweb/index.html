@@ -543,10 +543,11 @@ async function refreshAll(){
   const me=await j('/api/world/memories');
   if(me.memories!==undefined)renderMemories(me.memories);
   renderDecisions();
-  renderReadiness();
-  renderLoop();
-  renderSnapshots();
-  loadNovel();
+renderReadiness();
+renderLoop();
+renderSnapshots();
+loadForeshadows();
+loadNovel();
 }
 function renderWorldState(st){
   const t=st.world_level||{};
@@ -585,7 +586,7 @@ async function loadToday(){
 function renderDialogue(d){
   const last=d.results?d.results[d.results.length-1]:d;
   const dl=last.dialogue||[];
-  if(!dl.length){$('dialogue').innerHTML='<div class="empty">无</div>';return}
+  if(!dl.length){$('dialogue').innerHTML='<div class="empty">今日无对话（平淡日）</div>';return}
   $('dialogue').innerHTML=dl.map(t=>{
     const me=t.speaker.includes(heroName)||t.speaker==='protagonist';
     return `<div class="dlg"><span class="who ${me?'hero':''}">${escapeHtml(t.speaker.replace('npc_',''))}</span><span>${escapeHtml(t.speech)}</span></div>`;
