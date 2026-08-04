@@ -2,8 +2,9 @@
 // 魔改自 Nigh/show-me-the-story（Go 单二进制 + WebUI，零外部依赖）
 //
 // 双端口架构：
-//   :48090 小说创作服务（复用 show-me-the-story 的小说化流水线）
-//   :48091 世界模拟服务（WorldSim State Engine + 调度器，新增）
+//
+//	:48090 小说创作服务（复用 show-me-the-story 的小说化流水线）
+//	:48091 世界模拟服务（WorldSim State Engine + 调度器，新增）
 package main
 
 import (
@@ -40,8 +41,8 @@ var wsWeb embed.FS
 var version = "dev"
 
 const (
-	storyPort  = ":48090" // 小说化服务（原项目功能）
-	worldPort  = ":48091" // 世界模拟服务（WorldSim 新增）
+	storyPort = ":48090" // 小说化服务（原项目功能）
+	worldPort = ":48091" // 世界模拟服务（WorldSim 新增）
 )
 
 func main() {
@@ -108,16 +109,16 @@ func resolveProgDir() string {
 
 // worldInstance 单个世界实例（独立数据目录：worlds/{名字}/）
 type worldInstance struct {
-	name    string
-	dir     string
-	engine  *engine.StateEngine
-	sim     *sim.Simulator
-	llm     *sim.LLMClient
-	wb      *worldbook.Worldbook
-	novelW  *novel.Writer
-	apiCfg  *config.APIConfig
+	name     string
+	dir      string
+	engine   *engine.StateEngine
+	sim      *sim.Simulator
+	llm      *sim.LLMClient
+	wb       *worldbook.Worldbook
+	novelW   *novel.Writer
+	apiCfg   *config.APIConfig
 	heroName string // 主角名（小说写手必须用模拟主角名）
-	created bool // 是否已初始化世界状态（主角等）
+	created  bool   // 是否已初始化世界状态（主角等）
 }
 
 func (w *worldInstance) ready() bool { return w != nil && w.engine != nil }
@@ -188,11 +189,11 @@ type worldServer struct {
 	apiCfg  *config.APIConfig
 	novelMu sync.Mutex // 小说生成防重入锁（并发请求会写重复章号）
 
-	loopMu      sync.Mutex    // 后台持续运行控制
-	loopRunning bool          // 循环是否在跑
+	loopMu      sync.Mutex // 后台持续运行控制
+	loopRunning bool       // 循环是否在跑
 	loopCancel  context.CancelFunc
-	loopTarget  int           // 目标 day（世界时间）
-	loopWorld   string        // 循环绑定的世界名
+	loopTarget  int    // 目标 day（世界时间）
+	loopWorld   string // 循环绑定的世界名
 }
 
 // handleThemesList GET /api/worldbooks/themes — 主题包列表（建世界下拉用）
@@ -818,12 +819,12 @@ func (ws *worldServer) handleSimDay(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	ws.writeJSON(w, 200, map[string]any{
-		"ok":        true,
-		"results":   results,
-		"paused":    results[len(results)-1].Paused,
-		"revision":  inst.engine.State().Revision,
-		"day":       inst.engine.State().Day,
-		"cache":     llm.CacheStats(),
+		"ok":       true,
+		"results":  results,
+		"paused":   results[len(results)-1].Paused,
+		"revision": inst.engine.State().Revision,
+		"day":      inst.engine.State().Day,
+		"cache":    llm.CacheStats(),
 	})
 }
 
@@ -854,11 +855,11 @@ func (ws *worldServer) handleSetLLM(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Mode        string            `json:"mode"` // mock | real | off
-		BaseURL     string            `json:"base_url"`
-		Model       string            `json:"model"`
-		APIKey      string            `json:"api_key"`
-		ModelTiers  map[string]string `json:"model_tiers"` // 模型分层：fast/normal/premium
+		Mode       string            `json:"mode"` // mock | real | off
+		BaseURL    string            `json:"base_url"`
+		Model      string            `json:"model"`
+		APIKey     string            `json:"api_key"`
+		ModelTiers map[string]string `json:"model_tiers"` // 模型分层：fast/normal/premium
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		ws.writeJSON(w, 400, map[string]string{"error": "请求解析失败: " + err.Error()})
@@ -1059,7 +1060,7 @@ func (ws *worldServer) handleMemories(w http.ResponseWriter, r *http.Request) {
 	}
 	ms := inst.sim.MemoryStore()
 	type actorMem struct {
-		Actor   string           `json:"actor"`
+		Actor    string            `json:"actor"`
 		Memories []sim.MemoryEntry `json:"memories"`
 	}
 	var out []actorMem

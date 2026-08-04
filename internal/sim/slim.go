@@ -35,9 +35,9 @@ func compactState(st *engine.WorldState) string {
 		"day":     st.Day,
 		"weather": st.Weather,
 		"world_level": map[string]any{
-			"tension":      st.WorldLevel.Tension,
-			"factions":     st.WorldLevel.Factions,
-			"locations":    st.WorldLevel.Locations,
+			"tension":       st.WorldLevel.Tension,
+			"factions":      st.WorldLevel.Factions,
+			"locations":     st.WorldLevel.Locations,
 			"global_events": lastN(st.WorldLevel.GlobalEvents, 5),
 		},
 		"entities": slimEntities(st.Entities),

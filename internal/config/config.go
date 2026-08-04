@@ -9,13 +9,13 @@ import (
 )
 
 type APIConfig struct {
-	APIKey              string `json:"api_key"`
-	BaseURL             string `json:"base_url"`
-	URLStrict           bool   `json:"url_strict,omitempty"` // true = 不自动插入 /v1，仅补 /chat/completions
-	Model               string `json:"model"`
-	MaxTokens           int    `json:"max_tokens,omitempty"` // 0 = 模型默认；Agent 调用建议 ≥ 8192
-	HTTPTimeoutSeconds  int    `json:"http_timeout_seconds"`
-	ContextBudgetTokens int    `json:"context_budget_tokens"` // 全书优化上下文预算，默认 900000
+	APIKey              string            `json:"api_key"`
+	BaseURL             string            `json:"base_url"`
+	URLStrict           bool              `json:"url_strict,omitempty"` // true = 不自动插入 /v1，仅补 /chat/completions
+	Model               string            `json:"model"`
+	MaxTokens           int               `json:"max_tokens,omitempty"` // 0 = 模型默认；Agent 调用建议 ≥ 8192
+	HTTPTimeoutSeconds  int               `json:"http_timeout_seconds"`
+	ContextBudgetTokens int               `json:"context_budget_tokens"` // 全书优化上下文预算，默认 900000
 	ModelTiers          map[string]string `json:"model_tiers,omitempty"` // 模型分层：fast/normal/premium → 模型名（缺省用 Model）
 }
 

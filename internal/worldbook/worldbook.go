@@ -13,23 +13,23 @@ import (
 )
 
 type Worldbook struct {
-	Title       string
-	A1Worldview string // 世界观（含隐藏真相部分）
-	A2Physics   string // 物理/超自然规则（L1）
-	A3Society   string // 社会结构（L2）
-	A4Geography string // 地理（L3）
-	A5Factions  string // 势力速览（明面部分）
-	A6GoalChain string // 主角目标链（长期/阶段/即时，网文引擎）
-	A7PowerSys  string // 能力成长体系（等级/解锁/升级时刻，网文引擎）
-	A8Villain   string // 反派行动线（谁在动/怎么压迫，网文引擎）
-	B1Secrets   string // 世界秘密（L5）
-	B2EventPool string // 事件类型池（导演内部）
-	B3ArcPlan   string // 全书弧线建议（导演内部）
+	Title         string
+	A1Worldview   string // 世界观（含隐藏真相部分）
+	A2Physics     string // 物理/超自然规则（L1）
+	A3Society     string // 社会结构（L2）
+	A4Geography   string // 地理（L3）
+	A5Factions    string // 势力速览（明面部分）
+	A6GoalChain   string // 主角目标链（长期/阶段/即时，网文引擎）
+	A7PowerSys    string // 能力成长体系（等级/解锁/升级时刻，网文引擎）
+	A8Villain     string // 反派行动线（谁在动/怎么压迫，网文引擎）
+	B1Secrets     string // 世界秘密（L5）
+	B2EventPool   string // 事件类型池（导演内部）
+	B3ArcPlan     string // 全书弧线建议（导演内部）
 	B4Foreshadows string // 隐藏伏笔清单（导演内部）
 	B5EventPool   string // 事件谱（本世界会发生的事，事件生成器的弹药库）
-	CNarrative  string // 叙事约束（小说化专属）
-	DSafety     string // 内容安全边界
-	Raw         string
+	CNarrative    string // 叙事约束（小说化专属）
+	DSafety       string // 内容安全边界
+	Raw           string
 	// 深层世界观层（E段：世界一开始就很大，随时间渐进揭示——冰山理论）
 	DeferredLayers []DeferredLayer
 	pendingMarker  string // 解析中的E段标题触发标记（临时）
@@ -109,14 +109,14 @@ func Parse(raw string) *Worldbook {
 		case "A4":
 			w.A4Geography = body
 		case "A5":
-		w.A5Factions = body
-	case "A6":
-		w.A6GoalChain = body
-	case "A7":
-		w.A7PowerSys = body
-	case "A8":
-		w.A8Villain = body
-	case "B1":
+			w.A5Factions = body
+		case "A6":
+			w.A6GoalChain = body
+		case "A7":
+			w.A7PowerSys = body
+		case "A8":
+			w.A8Villain = body
+		case "B1":
 			w.B1Secrets = body
 		case "B2":
 			w.B2EventPool = body
@@ -147,11 +147,11 @@ func Parse(raw string) *Worldbook {
 					if len(parts) > 1 {
 						head := parts[1]
 						if idx := strings.Index(head, "【"); idx >= 0 {
-						rest := head[idx:]
-						if end := strings.Index(rest, "】"); end > 0 {
-							eMarker = strings.TrimSpace(rest[len("【"):end])
+							rest := head[idx:]
+							if end := strings.Index(rest, "】"); end > 0 {
+								eMarker = strings.TrimSpace(rest[len("【"):end])
+							}
 						}
-					}
 					}
 					continue
 				}

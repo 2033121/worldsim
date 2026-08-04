@@ -8,6 +8,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
+	"time"
 	"worldsim/internal/agent"
 	"worldsim/internal/config"
 	"worldsim/internal/fsutil"
@@ -16,9 +19,6 @@ import (
 	"worldsim/internal/prose"
 	"worldsim/internal/sse"
 	"worldsim/internal/story"
-	"strings"
-	"sync"
-	"time"
 )
 
 type Handlers struct {

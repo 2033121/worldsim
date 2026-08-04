@@ -47,10 +47,10 @@ func (c *LLMClient) CompleteTier(ctx context.Context, tier, system, user string)
 // ---------- 世界 Agent（LLM）：世界推进 + 张力评估 → 状态变更提案 ----------
 
 type worldAdvanceRequest struct {
-	Day      int     `json:"day"`
-	Weather  string  `json:"weather"`
-	Tension  float64 `json:"tension"`
-	Events   []EventCard `json:"events"`
+	Day     int         `json:"day"`
+	Weather string      `json:"weather"`
+	Tension float64     `json:"tension"`
+	Events  []EventCard `json:"events"`
 }
 
 // WorldAdvanceLLM 让世界 Agent 用 LLM 决定本日世界变化（天气/全局事件/张力/势力动向）
@@ -192,9 +192,9 @@ func GMAgentLLM(ctx context.Context, c *LLMClient, st *engine.WorldState, wb *wo
 	}
 	// 校验基本字段
 	var chk struct {
-		ArcName string   `json:"arc_name"`
-		Goal    string   `json:"goal"`
-		Villain string   `json:"villain"`
+		ArcName    string   `json:"arc_name"`
+		Goal       string   `json:"goal"`
+		Villain    string   `json:"villain"`
 		Milestones []string `json:"milestones"`
 	}
 	if err := json.Unmarshal([]byte(jsonStr), &chk); err != nil || strings.TrimSpace(chk.ArcName) == "" {
@@ -455,8 +455,8 @@ func NewMockLLM() *LLMClient {
 	return &LLMClient{Mock: func(system, user string) string {
 		switch {
 		case strings.Contains(system, "事件生成器"):
-	// 事件 Agent mock
-	return `[{"id":"mock-ev-1","type":"wonder","title":"反常的异象","location":"常去的地方","severity":0.7,"frame":"天色将暗，一个平日里熟悉的地方透着说不出的反常，隐约有什么在等着。","first_actor":"protagonist","options":["走近看看","绕路离开","叫住旁人问问"]}]`
+			// 事件 Agent mock
+			return `[{"id":"mock-ev-1","type":"wonder","title":"反常的异象","location":"常去的地方","severity":0.7,"frame":"天色将暗，一个平日里熟悉的地方透着说不出的反常，隐约有什么在等着。","first_actor":"protagonist","options":["走近看看","绕路离开","叫住旁人问问"]}]`
 		case strings.Contains(system, "世界引擎"):
 			// 世界 Agent mock
 			return `{"changes":[{"path":"world_level.tension","op":"set","value":0.45},{"path":"world_level.weather","op":"set","value":"雨"},{"path":"world_level.global_events","op":"add","value":"镇上有人议论昨晚的反常动静"}],"reason":"反常事件推高张力"}`

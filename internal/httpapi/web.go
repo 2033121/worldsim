@@ -12,13 +12,13 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"sort"
+	"strings"
+	"time"
 	"worldsim/internal/config"
 	"worldsim/internal/i18n"
 	"worldsim/internal/sse"
 	"worldsim/internal/story"
-	"sort"
-	"strings"
-	"time"
 )
 
 // StartWebServer wires all routes and blocks serving HTTP. staticFiles must

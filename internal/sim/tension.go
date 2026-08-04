@@ -26,7 +26,8 @@ func (s *Simulator) SetMode(m string) {
 }
 
 // decideMode 根据张力自适应选择粒度（§5 表格）：
-//   tension≥0.5 → Scene；0.3~0.5 → Summary；<0.3 连续3天 → Skip
+//
+//	tension≥0.5 → Scene；0.3~0.5 → Summary；<0.3 连续3天 → Skip
 func (s *Simulator) decideMode(ctx context.Context) {
 	t := s.engine.State().WorldLevel.Tension
 	old := s.mode
@@ -50,8 +51,8 @@ func (s *Simulator) decideMode(ctx context.Context) {
 			Day: s.day, Kind: "STATE", Time: now(),
 			Content:    fmt.Sprintf("张力引擎：模式 %s → %s（张力 %.2f）", old, s.mode, t),
 			Visibility: "public", Source: "系统",
-		
-			Weight: 0.15, Tags: []string{"张力"},})
+
+			Weight: 0.15, Tags: []string{"张力"}})
 	}
 }
 
@@ -127,8 +128,8 @@ func (s *Simulator) runSkip(ctx context.Context, res *DayResult) (*DayResult, er
 		Day: s.day, Kind: "FACT", Time: now(),
 		Content:    summary,
 		Visibility: "public", Source: "快进",
-	
-	Weight: 0.5, Tags: []string{"快进"},})
+
+		Weight: 0.5, Tags: []string{"快进"}})
 	res.Events = nil
 	res.Chronicle = append(res.Chronicle, s.chronicle[len(s.chronicle)-1])
 

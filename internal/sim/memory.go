@@ -20,17 +20,19 @@ import (
 type MemoryEntry struct {
 	Day        int     `json:"day"`
 	Time       string  `json:"time"`
-	Actor      string  `json:"actor"`   // 谁的记忆
-	Content    string  `json:"content"` // 记忆内容（已转述为本人视角）
-	Kind       string  `json:"kind"`    // event | dialogue | state | reflection | plan
+	Actor      string  `json:"actor"`      // 谁的记忆
+	Content    string  `json:"content"`    // 记忆内容（已转述为本人视角）
+	Kind       string  `json:"kind"`       // event | dialogue | state | reflection | plan
 	Importance float64 `json:"importance"` // 0~1
 }
 
 // MemoryStore 全角色记忆库（每个角色独立记忆流，互不串通）
 // 三层记忆架构（防膨胀，参考 Mem0/MemGPT/Generative Agents）：
-//   Working 工作记忆：近30天完整记忆（活跃期，全量保留）
-//   Archive 存档记忆：更早记忆按月LLM摘要压缩（每月1-3条）
-//   Core    核心记忆：人设/身份/长期目标（存在 entities.extra，不占记忆库）
+//
+//	Working 工作记忆：近30天完整记忆（活跃期，全量保留）
+//	Archive 存档记忆：更早记忆按月LLM摘要压缩（每月1-3条）
+//	Core    核心记忆：人设/身份/长期目标（存在 entities.extra，不占记忆库）
+//
 // 压缩链：Working → 月度摘要 → 年度摘要 → 遗忘（超长期低重要）
 type MemoryStore struct {
 	memories map[string][]MemoryEntry // Working：近30天完整记忆

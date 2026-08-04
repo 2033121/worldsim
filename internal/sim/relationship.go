@@ -54,13 +54,13 @@ func RelStatusLabel(affinity, trust float64) string {
 
 // RelationshipView 某角色视角下的一段关系（用于查询/展示）
 type RelationshipView struct {
-	Other     string   `json:"other"`
-	Affinity  float64  `json:"affinity"`  // 好感 -1~1（负=厌恶）
-	Trust     float64  `json:"trust"`     // 信任 0~1
-	Status    string   `json:"status"`    // 关系状态
-	SinceDay  int      `json:"since_day"` // 初遇日
-	Events    []string `json:"events"`    // 关系大事记
-	Role      string   `json:"role"`      // 对方在剧情中的角色定位
+	Other    string   `json:"other"`
+	Affinity float64  `json:"affinity"`  // 好感 -1~1（负=厌恶）
+	Trust    float64  `json:"trust"`     // 信任 0~1
+	Status   string   `json:"status"`    // 关系状态
+	SinceDay int      `json:"since_day"` // 初遇日
+	Events   []string `json:"events"`    // 关系大事记
+	Role     string   `json:"role"`      // 对方在剧情中的角色定位
 }
 
 // ---------- 关系读写（走 State Engine 提案，引擎是唯一事实源） ----------
@@ -180,10 +180,10 @@ func (s *Simulator) DecayRelations(hero string, everyNDays int) []engine.Change 
 // NewCharacter 事件引入的新角色
 type NewCharacter struct {
 	Name     string `json:"name"`
-	Gender   string `json:"gender"`   // 男/女/未知
-	Identity string `json:"identity"` // 职业/身份
-	Persona  string `json:"persona"`  // 一句话人设（性格/背景）
-	Location string `json:"location"` // 首次出场地点
+	Gender   string `json:"gender"`    // 男/女/未知
+	Identity string `json:"identity"`  // 职业/身份
+	Persona  string `json:"persona"`   // 一句话人设（性格/背景）
+	Location string `json:"location"`  // 首次出场地点
 	RoleHint string `json:"role_hint"` // 剧情定位建议：love_interest(潜在女主)/important_npc/rival/npc
 }
 

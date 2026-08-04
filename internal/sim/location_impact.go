@@ -199,12 +199,12 @@ func (s *Simulator) queuePendingEvents(day int, evs []EventCard) {
 // ---------- P1 伏笔账本（NeuroBook 理念：埋下/推进/酝酿/回收） ----------
 
 type Foreshadow struct {
-	Name      string  `json:"name"`
-	Planted   int     `json:"planted"`   // 埋设日
-	Status    string  `json:"status"`    // planted | progressing | resolved | abandoned
-	Progress  string  `json:"progress"`  // 当前进展（每次推进更新）
-	Resolved  int     `json:"resolved"`  // 回收日
-	Maturity  float64 `json:"maturity"`  // 酝酿度 0~1：铺垫期慢慢攒，到阈值自然爆发成戏剧事件
+	Name     string  `json:"name"`
+	Planted  int     `json:"planted"`  // 埋设日
+	Status   string  `json:"status"`   // planted | progressing | resolved | abandoned
+	Progress string  `json:"progress"` // 当前进展（每次推进更新）
+	Resolved int     `json:"resolved"` // 回收日
+	Maturity float64 `json:"maturity"` // 酝酿度 0~1：铺垫期慢慢攒，到阈值自然爆发成戏剧事件
 }
 
 // AdvanceForeshadowMaturity 酝酿度推进：铺垫 Agent 的"伏笔滋长"类铺垫调用
