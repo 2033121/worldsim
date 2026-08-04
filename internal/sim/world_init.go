@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"worldsim/internal/engine"
@@ -50,7 +51,9 @@ type WorldInitPlan struct {
 
 // WorldInitPlanLLM 用 LLM 按世界书生成世界初始方案（1次 fast 调用）
 func WorldInitPlanLLM(ctx context.Context, c *LLMClient, wb *worldbook.Worldbook) *WorldInitPlan {
+	fmt.Printf(" [DEBUG-Init] c=%v wb=%v\n", c != nil, wb != nil)
 	if c == nil || wb == nil {
+		fmt.Printf(" [DEBUG-Init] 返回nil: c=%v wb=%v\n", c != nil, wb != nil)
 		return nil
 	}
 	ctx = llm.WithSpan(ctx, "世界初始化")
@@ -65,25 +68,34 @@ func WorldInitPlanLLM(ctx context.Context, c *LLMClient, wb *worldbook.Worldbook
 1. **一切按世界书来**：主角的职业/处境/目标必须从世界书的弧线（B3）和世界观（A1）推导，NPC 从势力（A3）和秘密（B1）推导——绝不允许套用"都市待业青年/便利店老板"这类别的世界的模板。
 2. 主角要有"生活质感"：他的日常（砍柴/烧火/数灵石/排队领饭）是他那个世界真实的生活，不是抽象设定。
 3. NPC 2~3个：1个与主角有日常接触的（同村/同门/邻居），1个是"知道内情的人"（从世界书秘密里选），1个是势力代表（从世界书势力里选）。
-4. **assets（资产表）**：按世界书和主角处境，用这个世界特有的资产维度做键值表。都市世界可有"现金/存款/欠款/功德值"，修仙世界可有"铜钱/灵石/丹药/粮袋"，末世世界可有"物资点/食物/弹药"。值用该世界能理解的数值。**不要照抄例子，按世界书定维度。**
+4. **assets（资产表）**：按世界书和主角处境，用这个世界特有的资产维度做键值表。都市世界可有"现金/存款/欠款/功德值"，修仙世界可有"铜钱/灵石/丹药/粮袋"，末世世界可有"物资点/食物/弹药"。值用该世界能理解的数值。不要照抄例子，按世界书定维度。
 5. **body（身体状态）**：vitals 是主角当前的多维身体/精神数值（都市常见：体力/精神/健康；修仙常见：灵力/伤势/心境；按世界和处境选合理维度，2~4个即可）。desc 用一句话描述当前状态（如"吃泡面度日，前途未卜"）。不要写成空洞的"良好"。
-6. 只输出 JSON，不要其他文字。`
+6. **数值类型（重要）**：assets 和 body.vitals 里的**值必须是数字**，直接写 "现金":1280（不要给数字加引号，如 "现金":"1280" 是错误写法）。money 也必须是数字。任何数值都不要写成字符串。
+7. 只输出 JSON，不要其他文字。`
 	raw, err := c.CompleteTier(ctx, "fast", system, "请生成这个世界的初始方案。世界书内容：\n"+worldCtx)
 	if err != nil {
+		fmt.Printf(" [DEBUG-Init] CompleteTier失败: %v\n", err)
 		return nil
 	}
 	jsonStr := llm.ExtractJSON(raw)
 	if jsonStr == "" {
+		fmt.Printf(" [DEBUG-Init] 无JSON: %.200s\n", raw)
 		return nil
 	}
+	// 容错：LLM 偶发把数值输出成字符串（如 "1280" 而非 1280），会导致 map[string]float64 解析失败。
+	// 先解析为通用结构，把 assets/body.vitals 的字符串值强转为数字，再落到强类型结构——提示词已约束，这里兜底。
+	jsonStr = normalizePlanNumbers(jsonStr)
 	var plan WorldInitPlan
-	if json.Unmarshal([]byte(jsonStr), &plan) != nil {
+	if err := json.Unmarshal([]byte(jsonStr), &plan); err != nil {
+		fmt.Printf(" [DEBUG-Init] JSON解析失败: %v\ntext=%.600s\n", err, jsonStr)
 		return nil
 	}
 	if strings.TrimSpace(plan.Protagonist.Name) == "" {
+		fmt.Printf(" [DEBUG-Init] 主角名为空\n")
 		return nil
 	}
 	if len(plan.SeedLocations) == 0 {
+		fmt.Printf(" [DEBUG-Init] 无seed_locations\n")
 		return nil
 	}
 	return &plan
@@ -155,4 +167,50 @@ func (p *WorldInitPlan) Changes(hero string) []engine.Change {
 func (p *WorldInitPlan) String() string {
 	return fmt.Sprintf("主角=%s(%s@%s) NPC=%d 地点=%d 事件=%d",
 		p.Protagonist.Name, p.Protagonist.Job, p.Protagonist.Location, len(p.NPCs), len(p.SeedLocations), len(p.WorldEvents))
+}
+
+// normalizePlanNumbers 把 LLM 输出中字符串化的数值强转为数字（assets/body.vitals/money），
+// 防止偶发输出 "1280" 导致 JSON 解析失败。解析失败时原样返回，交由调用方报错兜底。
+func normalizePlanNumbers(jsonStr string) string {
+	var generic map[string]any
+	if err := json.Unmarshal([]byte(jsonStr), &generic); err != nil {
+		return jsonStr
+	}
+	coerceMapStrings := func(m map[string]any) {
+		for k, v := range m {
+			if s, ok := v.(string); ok {
+				if f, err := parseNumeric(s); err == nil {
+					m[k] = f
+				}
+			}
+		}
+	}
+	// protagonist.assets / protagonist.body.vitals
+	if prot, ok := generic["protagonist"].(map[string]any); ok {
+		if assets, ok := prot["assets"].(map[string]any); ok {
+			coerceMapStrings(assets)
+		}
+		if body, ok := prot["body"].(map[string]any); ok {
+			if vitals, ok := body["vitals"].(map[string]any); ok {
+				coerceMapStrings(vitals)
+			}
+		}
+		if m, ok := prot["money"]; ok {
+			if s, ok := m.(string); ok {
+				if f, err := parseNumeric(s); err == nil {
+					prot["money"] = f
+				}
+			}
+		}
+	}
+	out, err := json.Marshal(generic)
+	if err != nil {
+		return jsonStr
+	}
+	return string(out)
+}
+
+// parseNumeric 解析数字字符串（含小数），失败返回错误
+func parseNumeric(s string) (float64, error) {
+	return strconv.ParseFloat(strings.TrimSpace(s), 64)
 }

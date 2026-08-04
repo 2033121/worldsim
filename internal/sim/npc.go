@@ -27,14 +27,18 @@ func (s *Simulator) NPCRespond(ctx context.Context, npcName, npcMemory, scene st
 	}
 	// 注入完整人设档案（性格/习惯/社交/行为/思考方式）——前缀稳定，利于 DeepSeek 缓存
 	profile := s.FormatSheetForPrompt(npcName)
-	system := `你是{npc}，一个活在浮城里的真人。你必须有灵魂——言行由你的人格档案决定，保持一致性：
+	// 世界背景从世界书动态注入（杜绝"浮城"这类硬编码世界名污染任意世界）
+	worldCtx := s.worldBriefForDialogue()
+	system := `你是{npc}，活在这个世界里的真人。你必须有灵魂——言行由你的人格档案决定，保持一致性：
 ` + profile + `
+世界背景：{world}
 
 规则：
 1. 输出严格 JSON：{"speech":"你说出口的一句话（口语化，带你的习惯/口头禅，符合身份，不超过50字）","mood":"当前情绪","relation_delta":0.1}
 2. relation_delta 是你对主角好感度的变化（-0.3~0.3）
 3. 你的习惯和性格会自然流露在语言里（小动作、口头禅、思维方式）；话里有话可以，但别直白剧透；不知道的事不要装知道。`
 	system = strings.ReplaceAll(system, "{npc}", npcName)
+	system = strings.ReplaceAll(system, "{world}", worldCtx)
 
 	// 记忆是动态的，放 user 末尾（保证 system 前缀字节级稳定 → 缓存命中）
 	user := fmt.Sprintf("你的记忆：\n%s\n\n当前场景：%s\n你看到主角（{HERO}）来了。请自然地、按你的性格说一句话。", npcMemory, scene)
@@ -63,13 +67,13 @@ func (s *Simulator) NPCRespond(ctx context.Context, npcName, npcMemory, scene st
 }
 
 // HeroRespondLLM 主角在对话中的回应（简短自然，基于感知与性格；动态内容放user保持前缀稳定）
-func HeroRespondLLM(ctx context.Context, c *LLMClient, hero, heroProfile, npcSpeech string, wb *worldbook.Worldbook) (DialogueTurn, error) {
+func HeroRespondLLM(ctx context.Context, c *LLMClient, hero, heroProfile, other, npcSpeech string, wb *worldbook.Worldbook) (DialogueTurn, error) {
 	ctx = llm.WithSpan(ctx, "主角回应")
 	worldCtx := ""
 	if wb != nil {
-		worldCtx = wb.ForProtagonist(hero, heroProfile)
+		worldCtx = wb.ForWorldBrief()
 	}
-	system := `你是主角{hero}，一个活在浮城里的真人。{world}
+	system := `你是主角{hero}，活在这个世界里的真人。{world}
 
 规则：
 1. 输出严格 JSON：{"speech":"你的回应（口语化，不超过40字）","thinking":"你心里怎么想（一句话）"}
@@ -77,8 +81,9 @@ func HeroRespondLLM(ctx context.Context, c *LLMClient, hero, heroProfile, npcSpe
 	system = strings.ReplaceAll(system, "{hero}", hero)
 	system = strings.ReplaceAll(system, "{world}", worldCtx)
 
-	// 老陈说了什么 = 动态，放 user（system 前缀稳定）
-	user := fmt.Sprintf("你正在和老陈对话，老陈说：\"%s\"\n请用你的身份与性格自然地回应一句话。", npcSpeech)
+	// 对话对象说了什么 = 动态，放 user（system 前缀稳定）
+	user := fmt.Sprintf("你正在和{other}对话，{other}说：\"%s\"\n请用你的身份与性格自然地回应一句话。", npcSpeech)
+	user = strings.ReplaceAll(user, "{other}", other)
 
 	raw, err := c.CompleteTier(ctx, "fast", system, user)
 	if err != nil {
@@ -189,7 +194,7 @@ func (s *Simulator) RunDialogue(ctx context.Context, ev EventCard) ([]DialogueTu
 		if len(turns) > 0 {
 			if s.llm != nil {
 				heroProfile := s.heroProfile()
-				t, err := HeroRespondLLM(ctx, s.llm, s.heroName, heroProfile, turns[0].Speech, s.wb)
+				t, err := HeroRespondLLM(ctx, s.llm, s.heroName, heroProfile, npcName, turns[0].Speech, s.wb)
 				if err == nil {
 					turns = append(turns, t)
 				} else {

@@ -2,8 +2,9 @@
 // 魔改自 Nigh/show-me-the-story（Go 单二进制 + WebUI，零外部依赖）
 //
 // 双端口架构：
-//   :48090 小说创作服务（复用 show-me-the-story 的小说化流水线）
-//   :48091 世界模拟服务（WorldSim State Engine + 调度器，新增）
+//
+//	:48090 小说创作服务（复用 show-me-the-story 的小说化流水线）
+//	:48091 世界模拟服务（WorldSim State Engine + 调度器，新增）
 package main
 
 import (
@@ -620,90 +621,45 @@ func (ws *worldServer) handleInit(w http.ResponseWriter, r *http.Request) {
 		req.Weather = "晴"
 	}
 	base := inst.engine.State().Revision
+	// 防多次 init 累积实体：世界已有实体（已初始化过）时拒绝，提示删世界重建，避免新旧主角/NPC 混杂
+	if len(inst.engine.State().Entities) > 0 {
+		ws.writeJSON(w, 409, map[string]any{"ok": false, "error": fmt.Sprintf(
+			"世界「%s」已初始化（已有 %d 个实体）。为避免新旧主角/NPC 混杂，请先删除该世界目录后重建，再重新初始化。",
+			inst.name, len(inst.engine.State().Entities))})
+		return
+	}
 	// 世界初始化 Agent（按世界书生成主角/NPC/地点——修仙世界就该有砍柴少年，而不是都市待业青年）
 	// 独立 context：客户端断连不影响初始化完成
 	initCtx, initCancel := context.WithTimeout(context.Background(), 240*time.Second)
 	defer initCancel()
 	plan := sim.WorldInitPlanLLM(initCtx, inst.llm, inst.wb)
+	if plan == nil {
+		// 不再生成硬编码模板：LLM 不可用/失败 → 明确报错（杜绝"林默/老陈/待业青年"这类通用都市主角污染任意世界）
+		ws.writeJSON(w, 502, map[string]any{"ok": false, "error": fmt.Sprintf(
+			"世界初始化失败：LLM 不可用或生成内容无效，无法按世界书生成初始方案。请确认 api.json 已正确配置 LLM（base_url/model/api_key）后重试。系统已取消硬编码通用模板。"+
+				"（诊断：c=%v wb=%v）", inst.llm != nil, inst.wb != nil)})
+		return
+	}
 	hero := req.Protagonist
-	if plan != nil {
+	if hero == "" {
 		hero = plan.Protagonist.Name
-		if req.Protagonist != "" {
-			hero = req.Protagonist // 调用方显式指定主角名时优先
-		}
-		inst.heroName = hero
-		if inst.sim != nil {
-			inst.sim.SetHeroName(hero)
-		}
-		if inst.novelW != nil {
-			inst.novelW.SetHeroName(hero)
-		}
-		fmt.Printf(" [世界模拟] 初始化方案（按世界书生成）：%s\n", plan.String())
 	}
-	proposals := []engine.Proposal{}
-	if plan != nil {
-		proposals = append(proposals, engine.Proposal{
-			CommandID:    "init-1",
-			ActorID:      "world_agent",
-			BaseRevision: base,
-			Type:         "state_change",
-			Changes:      plan.Changes(hero),
-			Reason:       "世界初始化（按世界书生成）",
-		})
-	} else {
-		// fallback：LLM 不可用/失败 → 通用模板（保持兼容，但新世界建议配置 LLM 后 init）
-		if hero == "" {
-			hero = "林默"
-		}
-		inst.heroName = hero
-		if inst.sim != nil {
-			inst.sim.SetHeroName(hero)
-		}
-		if inst.novelW != nil {
-			inst.novelW.SetHeroName(hero)
-		}
-		fmt.Printf(" [世界模拟] 初始化方案：LLM 不可用，用通用模板\n")
-		proposals = append(proposals, engine.Proposal{
-			CommandID: "init-1", ActorID: "world_agent", BaseRevision: base, Type: "state_change",
-			Changes: []engine.Change{
-				{Path: "world_level.global_events", Op: "add", Value: "城市建立：" + req.City},
-				{Path: "world_level.tension", Op: "set", Value: 0.2},
-			}, Reason: "世界初始化"},
-		)
-		// 主角实体（示例：旧城区·便利店夜班）
-		proposals = append(proposals, engine.Proposal{
-			CommandID:    "init-2",
-			ActorID:      "world_agent",
-			BaseRevision: base + 1,
-			Type:         "state_change",
-			Changes: []engine.Change{
-				{Path: "entities." + hero + ".location", Op: "set", Value: "旧城区·主角公寓"},
-				{Path: "entities." + hero + ".money", Op: "set", Value: 3200},
-				{Path: "entities." + hero + ".health", Op: "set", Value: 85},
-				{Path: "entities." + hero + ".job", Op: "set", Value: "待业青年"},
-				{Path: "entities." + hero + ".alive", Op: "set", Value: true},
-				{Path: "entities." + hero + ".status", Op: "set", Value: "active"},
-				{Path: "entities." + hero + ".extra.role", Op: "set", Value: "protagonist"},
-			},
-			Reason: "主角诞生",
-		})
-		// 常驻 NPC 示例：老陈
-		proposals = append(proposals, engine.Proposal{
-			CommandID:    "init-3",
-			ActorID:      "world_agent",
-			BaseRevision: base + 2,
-			Type:         "state_change",
-			Changes: []engine.Change{
-				{Path: "entities.老陈.location", Op: "set", Value: "旧城区"},
-				{Path: "entities.老陈.job", Op: "set", Value: "店主"},
-				{Path: "entities.老陈.status", Op: "set", Value: "active"},
-				{Path: "entities.老陈.extra.role", Op: "set", Value: "important_npc"},
-				{Path: "entities.老陈.extra.profile", Op: "set", Value: "老陈：旧城区开店的中年人，表面话不多但消息灵通；似乎知道很多不该知道的事，身份成谜（真实身份由世界书设定决定，他清楚自己的过去，主角不知道）。"},
-				{Path: "entities.老陈.extra.memory", Op: "set", Value: "记得常来的年轻人（主角）；最近注意到浮城暗处有些不对劲的动静，心里不安。"},
-			},
-			Reason: "常驻NPC登场",
-		})
+	inst.heroName = hero
+	if inst.sim != nil {
+		inst.sim.SetHeroName(hero)
 	}
+	if inst.novelW != nil {
+		inst.novelW.SetHeroName(hero)
+	}
+	fmt.Printf(" [世界模拟] 初始化方案（按世界书生成）：%s\n", plan.String())
+	proposals := []engine.Proposal{{
+		CommandID:    "init-1",
+		ActorID:      "world_agent",
+		BaseRevision: base,
+		Type:         "state_change",
+		Changes:      plan.Changes(hero),
+		Reason:       "世界初始化（按世界书生成）",
+	}}
 
 	var lastErr error
 	// 独立 context：客户端断开（宿主 http_request 超时）不影响初始化提交

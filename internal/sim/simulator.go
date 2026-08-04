@@ -62,6 +62,16 @@ func (s *Simulator) EnableLLM(c *LLMClient) {
 // SetWorldbook 设置世界书（§3.3/§4.5：各 Agent 按分层注入）
 func (s *Simulator) SetWorldbook(wb *worldbook.Worldbook) { s.wb = wb }
 
+// worldBriefForDialogue 供 NPC/主角对话提示词用的世界简介——从世界书动态注入，杜绝任何硬编码的"浮城/都市"污染
+func (s *Simulator) worldBriefForDialogue() string {
+	if s.wb != nil {
+		if brief := s.wb.ForWorldBrief(); brief != "" {
+			return brief
+		}
+	}
+	return "这是一个活在故事里的世界，人们有各自的生活、关系和隐秘。"
+}
+
 func (s *Simulator) LastThinking() string { return s.lastThinking }
 
 // Thinkings 返回每日主角三问推理（小说化素材，day→thinking）
