@@ -101,6 +101,14 @@ curl localhost:48091/api/world/novel/chapter/1
 | 主题包 | `GET /api/worldbooks/themes` |
 | 统计 | `GET /api/world/token_stats` `GET /api/world/sim/thinking` |
 
+## 🤖 AI 客户端接入（MCP）
+
+WorldSim 提供标准 MCP Server（`worldsim-mcp/server.py`，零依赖），可接入 Codex CLI / Trae / Claude / Cursor：
+
+- Codex：`worldsim-mcp/codex.md`（config.toml / .mcp.json / codex mcp add）
+- Trae：`worldsim-mcp/trae.md`（MCP 面板 stdio 添加）
+- 仓库根 `AGENTS.md` 是 Codex 的协作指南
+
 ## 📥 下载
 
 多平台二进制 + 插件包见 [Releases](https://github.com/2033121/worldsim/releases)：
