@@ -114,7 +114,7 @@
     <span class="text-lg cloud-icon">⚙</span>
     <h2 class="text-sm font-semibold text-primary tracking-widest">操作台</h2>
     <div class="flex-1"></div>
-    <span class="badge badge-outline badge-xs">仙途演算</span>
+    <span class="badge badge-outline badge-xs">{ $currentWorld || '未选择世界' }</span>
   </div>
 
   <div>
