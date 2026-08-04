@@ -27,6 +27,7 @@ type Worldbook struct {
 	B3ArcPlan     string // 全书弧线建议（导演内部）
 	B4Foreshadows string // 隐藏伏笔清单（导演内部）
 	B5EventPool   string // 事件谱（本世界会发生的事，事件生成器的弹药库）
+	C0Tone        string // 题材基调（本世界的讲事风格：题材类型/主角人设/核心爽点/感情线定位/禁忌——所有Agent遵守的灵魂）
 	CNarrative    string // 叙事约束（小说化专属）
 	DSafety       string // 内容安全边界
 	Raw           string
@@ -126,6 +127,16 @@ func Parse(raw string) *Worldbook {
 			w.B4Foreshadows = body
 		case "B5":
 			w.B5EventPool = body
+		case "C0":
+			w.C0Tone = body
+		case "C1":
+			// C1 文风：兼容旧世界书（含"题材基调"），映射到基调字段。
+			// 若已显式定义 C0（更精确的基调守则），则 C1 作为增量补充。
+			if w.C0Tone == "" {
+				w.C0Tone = body
+			} else {
+				w.C0Tone = w.C0Tone + "\n\n" + body
+			}
 		case "C":
 			w.CNarrative = body
 		case "D":
@@ -284,7 +295,7 @@ func (w *Worldbook) RevealedAll() string {
 	return strings.TrimSpace(sb.String())
 }
 
-// ForProtagonist 主角视角：社会常识+地区常识+明面势力；物理规则用"角色认知视角"
+// ForProtagonist 主角视角：社会常识+地区常识+明面势力+主角人格与基调；物理规则用"角色认知视角"
 func (w *Worldbook) ForProtagonist(heroName, heroProfile string) string {
 	var sb strings.Builder
 	sb.WriteString("【世界·你眼中的样子（普通人的认知）】\n")
@@ -297,11 +308,11 @@ func (w *Worldbook) ForProtagonist(heroName, heroProfile string) string {
 	if w.A5Factions != "" {
 		sb.WriteString("· 你听过的势力：\n" + w.A5Factions + "\n")
 	}
-	// L1 角色认知视角：只描述"你作为普通人相信什么"，真值不透露
-	sb.WriteString("· 关于这个世界，你确信：你从未亲眼见过无法解释的事情；鬼神之说在街坊嘴里流传，但你只当谈资。\n")
+	// L1 角色认知视角：你确信什么、见过什么，由你的亲身经历决定（不再硬编码"从未见过超自然"，否则会与带超自然设定的世界矛盾）
 	if heroProfile != "" {
-		sb.WriteString("· 你自己：" + heroProfile + "\n")
+		sb.WriteString("· 你自己（你是谁、经历过什么、性格如何）：" + heroProfile + "\n")
 	}
+	sb.WriteString(w.ForTone())
 	return sb.String()
 }
 
@@ -320,6 +331,24 @@ func (w *Worldbook) ForWorldAgent() string {
 	if w.B4Foreshadows != "" {
 		sb.WriteString("B4 伏笔清单：\n" + w.B4Foreshadows + "\n")
 	}
+	sb.WriteString(w.ForTone())
+	return sb.String()
+}
+
+// ForTone 题材基调执行守则：本世界的"讲事灵魂"，所有 Agent 必须遵守。
+// 决定事件怎么发生、角色怎么行动、剧情朝哪走——防止"设定对但演出来跑偏"（如把喜剧写成正剧/言情）。
+func (w *Worldbook) ForTone() string {
+	var sb strings.Builder
+	sb.WriteString("【题材基调（本世界的讲事风格与灵魂，所有 Agent 必须严格遵守——它决定事件怎么发生、主角怎么行动、剧情朝哪走）】\n")
+	if strings.TrimSpace(w.C0Tone) != "" {
+		sb.WriteString(w.C0Tone + "\n")
+	} else {
+		sb.WriteString("（本世界未显式定义题材基调——请根据 A1 世界观的题材类型、A6 主角目标与主角身份，推断本世界的讲事风格：是喜剧/乐子人、还是正剧/热血/悬疑/末世求生？并在事件生成与角色行动中贯彻到底，不要写得四平八稳。）\n")
+	}
+	sb.WriteString("执行总则：\n")
+	sb.WriteString("· 事件与角色行动必须贴合基调：基调是喜剧/乐子人时，事件要有爽点、梗、脑洞反转，主角主动搞事，节奏轻快，杜绝拖沓言情；基调是正剧/热血时再走厚重压迫。\n")
+	sb.WriteString("· 主角人格必须符合基调（乐子人/热血/腹黑/惜字如金…），行动要带出这种人格，不能把主角写成四平八稳的正剧工具人。\n")
+	sb.WriteString("· 感情线（romance）在本世界是\"调味\"还是\"主线\"，由基调决定：基调未强调感情主线时，感情线只能作为轻松点缀，绝不能反客为主主导剧情。\n")
 	return sb.String()
 }
 
@@ -357,6 +386,7 @@ func (w *Worldbook) ForGM() string {
 	if w.B4Foreshadows != "" {
 		sb.WriteString("B4 伏笔清单（规划段落时推进/回收）：\n" + w.B4Foreshadows + "\n")
 	}
+	sb.WriteString(w.ForTone())
 	return sb.String()
 }
 
@@ -374,6 +404,7 @@ func (w *Worldbook) ForEventAgent() string {
 	if w.B5EventPool != "" {
 		sb.WriteString("B5 本世界事件谱（优先从这里挑事件，落到本世界的具体样子）：\n" + w.B5EventPool + "\n")
 	}
+	sb.WriteString(w.ForTone())
 	return sb.String()
 }
 
@@ -400,6 +431,7 @@ func (w *Worldbook) ForNovelist() string {
 	if w.CNarrative != "" {
 		sb.WriteString("C 叙事约束：\n" + w.CNarrative + "\n")
 	}
+	sb.WriteString(w.ForTone())
 	return sb.String()
 }
 

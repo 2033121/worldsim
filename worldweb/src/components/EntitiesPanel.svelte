@@ -15,7 +15,31 @@
         <div class="rounded-xl bg-base-200/50 border border-base-content/10 p-4 hover:border-primary/40 transition-all">
           <div class="font-semibold text-sm">{k}</div>
           <div class="text-xs text-base-content/50 mt-1 leading-relaxed">
-            {e.job || ''} · {e.location || ''}{e.health ? ' · 健康' + e.health : ''}
+            {e.job || ''} · {e.location || ''}
+            <div class="mt-1 flex flex-wrap gap-1">
+              {#if e.assets && Object.keys(e.assets).length}
+                {#each Object.entries(e.assets) as [aname, aval]}
+                  <span class="badge badge-sm badge-outline">{aname} {aval}</span>
+                {/each}
+              {/if}
+              {#if e.money != null && !(e.assets && Object.keys(e.assets).length)}
+                <span class="badge badge-sm badge-outline">💰 {e.money}</span>
+              {/if}
+            </div>
+            <div class="mt-1">
+              {#if e.body && (Object.keys(e.body.vitals || {}).length || e.body.desc)}
+                <div class="flex flex-wrap gap-1">
+                  {#each Object.entries(e.body.vitals || {}) as [vname, vval]}
+                    <span class="badge badge-sm badge-primary badge-outline">{vname} {vval}</span>
+                  {/each}
+                </div>
+                {#if e.body.desc}
+                  <div class="text-xs text-base-content/60 mt-1 italic">"{e.body.desc}"</div>
+                {/if}
+              {:else if e.health != null}
+                <span class="badge badge-sm badge-secondary badge-outline">健康 {e.health}</span>
+              {/if}
+            </div>
           </div>
         </div>
       {/each}

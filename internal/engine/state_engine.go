@@ -61,10 +61,20 @@ type Faction struct {
 	RecentActions []string `json:"recent_actions"`
 }
 
+// BodyState 身体/精神状态：通用多维键值 + 一段自由描述。
+// 维度字段由世界初始化/主角生成时按世界书动态定（都市=体力/精神/健康，修仙=灵力/伤势/心境…）；
+// 数值可被规则驱动，描述贴合剧情。
+type BodyState struct {
+	Vitals map[string]float64 `json:"vitals,omitempty"` // 多维数值，如 {"体力":80,"精神":70,"健康":90}
+	Desc   string             `json:"desc,omitempty"`   // 自由描述，如 "轻度感冒·通宵加班后很疲惫"
+}
+
 type Entity struct {
 	Location     string             `json:"location"`
-	Health       float64            `json:"health"`
-	Money        float64            `json:"money"`
+	Health       float64            `json:"health,omitempty"` // 兼容旧数据（保留，新世界用 Body）
+	Money        float64            `json:"money,omitempty"`  // 兼容旧数据（保留，新世界用 Assets）
+	Assets       map[string]float64 `json:"assets,omitempty"` // 资产表：通用键值，如 {"现金":3386,"功德值":1200,"存款":8000}
+	Body         BodyState          `json:"body,omitempty"`   // 身体状态：多维数值 + 描述
 	Job          string             `json:"job"`
 	Alive        bool               `json:"alive"`
 	Status       string             `json:"status"` // active | departed
@@ -454,6 +464,42 @@ func setEntityField(e *Entity, field string, v any, op string, rest []string) er
 			}
 			e.Relationship[rest[0]] = f
 		}
+	case "assets":
+		// entities.{name}.assets.{资产名}=数值
+		if len(rest) == 0 {
+			return fmt.Errorf("assets 路径需指定资产名: %s", strings.Join(rest, "."))
+		}
+		if e.Assets == nil {
+			e.Assets = map[string]float64{}
+		}
+		f, ok := toFloat(v)
+		if !ok {
+			return fmt.Errorf("资产值需数值: %s", rest[0])
+		}
+		e.Assets[rest[0]] = f
+	case "body":
+		// entities.{name}.body.vitals.{维度}=数值 | entities.{name}.body.desc=文本
+		if len(rest) == 0 {
+			return fmt.Errorf("body 路径需指定 vitals/desc")
+		}
+		switch rest[0] {
+		case "vitals":
+			if len(rest) < 2 {
+				return fmt.Errorf("body.vitals 需指定维度")
+			}
+			if e.Body.Vitals == nil {
+				e.Body.Vitals = map[string]float64{}
+			}
+			f, ok := toFloat(v)
+			if !ok {
+				return fmt.Errorf("身体维度值需数值: %s", rest[1])
+			}
+			e.Body.Vitals[rest[1]] = f
+		case "desc":
+			if s, ok := v.(string); ok {
+				e.Body.Desc = s
+			}
+		}
 	case "extra":
 		if e.Extra == nil {
 			e.Extra = map[string]any{}
@@ -489,6 +535,29 @@ func addEntityField(e *Entity, field string, v any, rest []string) error {
 				return fmt.Errorf("关系值需数值")
 			}
 			e.Relationship[rest[0]] += f
+		}
+	case "assets":
+		if len(rest) == 0 {
+			return fmt.Errorf("assets 路径需指定资产名")
+		}
+		f, ok := toFloat(v)
+		if !ok {
+			return fmt.Errorf("资产值需数值")
+		}
+		if e.Assets == nil {
+			e.Assets = map[string]float64{}
+		}
+		e.Assets[rest[0]] += f
+	case "body":
+		if len(rest) >= 2 && rest[0] == "vitals" {
+			f, ok := toFloat(v)
+			if !ok {
+				return fmt.Errorf("身体维度值需数值")
+			}
+			if e.Body.Vitals == nil {
+				e.Body.Vitals = map[string]float64{}
+			}
+			e.Body.Vitals[rest[1]] += f
 		}
 	}
 	return nil
@@ -616,6 +685,18 @@ func getFloat(s *WorldState, path string) (float64, bool) {
 				return ent.Health, true
 			case "money":
 				return ent.Money, true
+			case "assets":
+				// entities.{name}.assets.{资产名}
+				if len(parts) >= 4 && ent.Assets != nil {
+					v, ok := ent.Assets[parts[3]]
+					return v, ok
+				}
+			case "body":
+				// entities.{name}.body.vitals.{维度}
+				if len(parts) >= 5 && parts[3] == "vitals" && ent.Body.Vitals != nil {
+					v, ok := ent.Body.Vitals[parts[4]]
+					return v, ok
+				}
 			}
 		}
 	}

@@ -77,7 +77,7 @@ func WorldAdvanceLLM(ctx context.Context, c *LLMClient, st *engine.WorldState, e
 1. 输出严格 JSON，不要任何多余文字、markdown 代码块标记。
 2. 只输出状态变更提案（changes 数组），格式：
 {"changes":[{"path":"world_level.tension","op":"set","value":0.3},{"path":"world_level.global_events","op":"add","value":"..."},{"path":"entities.主角名.location","op":"set","value":"..."}],"reason":"..."}
-3. 可用路径：world_level.tension(0~1)、world_level.weather(晴/多云/雨/暴雨/雾/雪)、world_level.global_events(追加)、world_level.factions.*、entities.{名字}.{location/money/health/job/status/relationship.{npc}}
+3. 可用路径：world_level.tension(0~1)、world_level.weather(晴/多云/雨/暴雨/雾/雪)、world_level.global_events(追加)、world_level.factions.*、entities.{名字}.{location/job/status/relationship.{npc}}、entities.{名字}.assets.{资产名}、entities.{名字}.body.vitals.{维度}、entities.{名字}.body.desc
    —— 重要：entities 路径必须带字段（如 entities.主角名.location），禁止只写 entities.主角名；路径里不要有空格。
 4. 保持世界内在一致：张力随事件演化；推进要符合世界书规则；可以按 B3 弧线建议引导事件走向，但不要直接替主角决定行动。
 5. 未回收伏笔必须有"持续存在感"：不能写没、不能自行了结——它们是待回收的坑，世界推进要让它们继续存在甚至酝酿。
@@ -341,7 +341,7 @@ func EventGenLLM(ctx context.Context, c *LLMClient, st *engine.WorldState, wb *w
 
 // ---------- 主角 Agent（LLM）：三问决策法（§8.4） ----------
 
-const threeQuestionPrompt = `你是主角 {HERO}，生活在都市怪谈世界。请用"三问决策法"决定今天的行动（参考 Concordia）：
+const threeQuestionPrompt = `你是主角 {HERO}，生活在下方【你眼中的世界】所述的这个世界。请用"三问决策法"决定今天的行动（参考 Concordia）：
 第一问：我是谁？（身份、性格、现状、手头资源）
 第二问：我看到了什么？（基于下方感知，判断局势与利害）
 第三问：我打算怎么做？（给出具体行动与意图）
@@ -349,10 +349,12 @@ const threeQuestionPrompt = `你是主角 {HERO}，生活在都市怪谈世界�
 规则：
 1. 输出严格 JSON，格式：
 {"thinking":"三问的简要推理（内部想法，不对外）","action":"用一句话描述行动","changes":[{"path":"entities.{HERO}.location","op":"set","value":"..."},...],"reason":"行动理由"}
-2. changes 只写你作为主角能影响的状态：自己的 location/money/health/job/relationship（对NPC的观感）；禁止改 world_level.factions、他人 money/health
+2. changes 只写你作为主角能影响的状态：自己的 location/job/relationship（对NPC的观感）、assets 资产表（entities.{HERO}.assets.{资产名}）、body 身体状态（entities.{HERO}.body.vitals.{维度} 和 entities.{HERO}.body.desc）；禁止改 world_level.factions、他人 assets/body
 3. 行动必须基于感知信息，不要全知（你看不到远处/他人内心）
 4. 限制性视角三不（网络小说默认视角）：**不描写你不知道的**（远处的事/别人的内心/未验证的信息一律不写不猜）、**不解释你没验证的**、**不预设别人能理解你的想法**——你的行动和思考只能基于你亲眼看到、亲耳听到、亲身感受到的东西
-5. money 变更（消费）用 op=add 加负值`
+5. 资产变更（消费/收入）用 op=add；例：买早餐扣现金 → {"path":"entities.{HERO}.assets.现金","op":"add","value":-8}
+6. 身体状态变更（受伤/劳累/恢复）用 op=add 改 body.vitals 对应维度，并同步更新 body.desc 描述当前状态
+7. 性格要把"你是谁"活出来：你的性格、身份、处境（见下方"你自己"）必须贯穿你的思考和行动——你是乐子人/上进/腹黑/热血/怂，就按这个性格去搞事、去行动，绝不当四平八稳的工具人。`
 
 // ProtagonistDecideLLM 主角三问决策 → 行动提案（返回提案与三问推理文本）
 func ProtagonistDecideLLM(ctx context.Context, c *LLMClient, st *engine.WorldState, obs ObservationPacket, hero string, wb *worldbook.Worldbook, memories string) (*engine.Proposal, string, error) {
