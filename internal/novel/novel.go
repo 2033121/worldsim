@@ -179,12 +179,88 @@ func (w *Writer) pickChapterTitle(chronicle []sim.ChronicleEntry, days []int) st
 	return fmt.Sprintf("第%d至%d天", days[0], days[len(days)-1])
 }
 
+// ---------- 叙事规划层（两段式管线第①段） ----------
+
+// NarrativePlan 叙事规划：把编年史素材翻译成"怎么讲"的章节剧本
+type NarrativePlan struct {
+	OpeningHook   string `json:"opening_hook"`    // 开场钩子：用什么场景/悬念开场
+	MiddleDevelop string `json:"middle_develop"`  // 中段展开：哪些事件写足、哪些压缩
+	Climax        string `json:"climax"`           // 本章高潮/爽点：最该写足的那个时刻
+	ClosingHook   string `json:"closing_hook"`    // 收尾钩子：结尾留什么具体悬念
+	POVNote       string `json:"pov_note"`        // 视角决策：主角知道什么/不知道什么
+	PayoffType    string `json:"payoff_type"`     // 本章爽点类型（打脸/收获/装逼/情感/无）
+	Pacing        string `json:"pacing"`          // 节奏：fast(快节奏推进) / slow(蓄力铺垫) / mixed(张弛交替)
+	WordBudget    string `json:"word_budget"`     // 字数策略：哪些段写足哪些段省略
+}
+
+// planChapterNarrative 叙事规划层：拿编年史素材+世界书+前情，让 LLM 规划"这一章怎么讲"
+// 这是两段式管线的第①段——编年史是"发生了什么"，叙事规划决定"怎么讲"
+func (w *Writer) planChapterNarrative(ctx context.Context, p ChapterPlan, material string) string {
+	ctx = llm.WithSpan(ctx, "叙事规划")
+	if w.APICfg == nil {
+		return ""
+	}
+
+	worldCtx := ""
+	if w.WB != nil {
+		worldCtx = w.WB.ForNovelist()
+	}
+
+	system := `你是网文小说的"叙事规划师"。你的任务不是写正文，而是拿到模拟世界的编年史素材后，规划"这一章怎么讲"——把日志变成剧本大纲。
+输出严格 JSON，格式：
+{"opening_hook":"开场用什么场景/悬念砸脸（具体到画面和动作，禁止'氛围铺垫'开场）","middle_develop":"中段怎么展开：哪些事件写成完整场景（写足）、哪些事件压缩成一句过渡、事件之间怎么衔接","closing_hook":"结尾留什么具体悬念（具体到谁/什么/在哪，禁止'他感觉有大事要发生'）","pov_note":"视角决策：主角本章知道什么/不知道什么/他以为的真相和实际的差距","payoff_type":"本章爽点类型（打脸/收获/装逼/情感/无——如果本章不该给爽点就填'无'）","pacing":"节奏（fast=快节奏冲突推进/slow=蓄力铺垫/mixed=张弛交替）","word_budget":"字数策略：哪些段写足（高潮/冲突/爽点）、哪些段省略（过渡/背景）、预估本章该长该短"}
+规则：
+1. 素材是"原料"，你是"厨师"——决定怎么切、怎么炒、怎么摆盘。平淡的日子不用硬写，戏剧性的场景要放大。
+2. 开场必须直接进冲突/异常/悬念，禁止天气/环境开场。
+3. 收尾必须留具体钩子，让读者想看下一章。
+4. 视角严格限知：主角不知道的绝对不能写。
+5. 爽点要按节奏来——不是每章都要给爽点，憋着的章节要标注"蓄力"，释放的章节标注"爆发"。
+6. 如果素材里有打脸/收获/装逼/情感的机会，标注出来让写手写足。
+7. 只输出 JSON，不要其他文字。`
+
+	user := fmt.Sprintf("章节信息：第%d章（模拟第%d~%d天）\n\n世界设定：\n%s\n\n", p.Num, p.DayStart, p.DayEnd, worldCtx)
+	if w.PrevSummary != "" {
+		user += "前情提要：\n" + w.PrevSummary + "\n\n"
+	}
+	if w.Foreshadows != "" {
+		user += "未回收伏笔：\n" + w.Foreshadows + "\n\n"
+	}
+	user += "本章素材（编年史剪辑）：\n" + material + "\n\n请规划这一章怎么讲。"
+
+	raw, err := llm.CallAPITierSync(ctx, w.APICfg, "fast", system, user)
+	if err != nil {
+		return ""
+	}
+	jsonStr := llm.ExtractJSON(raw)
+	if jsonStr == "" {
+		return ""
+	}
+	var plan NarrativePlan
+	if err := json.Unmarshal([]byte(jsonStr), &plan); err != nil {
+		return ""
+	}
+	// 格式化成写手可读的叙事大纲
+	var sb strings.Builder
+	sb.WriteString("\n【叙事规划（本章剧本大纲，写手必须照此结构写）】\n")
+	sb.WriteString("开场钩子：" + plan.OpeningHook + "\n")
+	sb.WriteString("中段展开：" + plan.MiddleDevelop + "\n")
+	sb.WriteString("本章高潮：" + plan.Climax + "\n")
+	sb.WriteString("收尾钩子：" + plan.ClosingHook + "\n")
+	sb.WriteString("视角注意：" + plan.POVNote + "\n")
+	sb.WriteString("爽点类型：" + plan.PayoffType + "\n")
+	sb.WriteString("节奏定位：" + plan.Pacing + "\n")
+	sb.WriteString("字数策略：" + plan.WordBudget + "\n")
+	return sb.String()
+}
+
 // ---------- 章节写作 ----------
 
 // WriteChapter 生成一章小说正文（LLM），保存到 chapters/NNN_标题.md，返回正文
 func (w *Writer) WriteChapter(ctx context.Context, p ChapterPlan, chronicle []sim.ChronicleEntry, thinkings map[int]string, entities map[string]engine.Entity) (string, error) {
 	ctx = llm.WithSpan(ctx, "小说写手")
 	material := w.buildChapterMaterial(p, chronicle, thinkings)
+	// 两段式管线第①段：叙事规划层——先规划"这一章怎么讲"，再让写手按大纲写
+	narrativePlan := w.planChapterNarrative(ctx, p, material)
 	// 小说化用设定：A1世界观 + B4伏笔清单 + C文风（世界书驱动，文风随题材走）
 	worldCtx := ""
 	if w.WB != nil {
@@ -266,8 +342,8 @@ func (w *Writer) WriteChapter(ctx context.Context, p ChapterPlan, chronicle []si
 戏剧化改编权（你是导演，不是记录员）：
 · 素材是"原料"，不是"剧本"——你有权压缩、合并、强化、改编：平淡的日子一句带过或直接跳过，戏剧性场景（冲突/对峙/发现/升级）写足放大。
 · 主角主动性：素材里主角如果只是"被怪事找上门"，你要主动给他安排行动——他去查、他去问、他做选择，让读者看到他在推动故事。
-· 能力成长：按 A7 能力体系给本章的能力状态定位（Lv1 时间感知），素材里"掌心发热/声音共振"这类现象要写成能力在运作（感知到什么、有什么用、代价是什么），该升级的章节写出升级时刻。
-· 反派存在感：按 A8 反派行动线，每 2~3 章安排反派动一次（猎头挖角/秩序局上门/白昼跟踪），主角要有应对，压迫→对抗→打脸要有完整的爽点闭环。
+· 能力成长：按 A7 能力体系给本章的能力状态定位，素材里能力相关的现象要写成能力在运作（感知到什么、有什么用、代价是什么），该升级的章节写出升级时刻。
+· 反派存在感：按 A8 反派行动线，每 2~3 章安排反派动一次，主角要有应对，压迫→对抗→打脸要有完整的爽点闭环。
 · 强化爽点：发现关键线索、反杀、打脸、能力升级、关系突破——这些时刻宁可写足不要一笔带过（读者等的就是这些）。
 4. 输出纯小说文本：开头一行写"第N章·标题"（用章号），正文分段。禁止 JSON、禁止"本章完"之外的解说，禁止使用 markdown 标题符号。
 5. 正文结束后，**另起一行**写摘要块，格式严格为：【本章摘要】+100字左右的剧情概括（本章人物状态变化/关键事件/伏笔推进/留下的悬念，供下一章作者衔接，**不属于正文，不要写进故事里**）。
@@ -276,6 +352,11 @@ func (w *Writer) WriteChapter(ctx context.Context, p ChapterPlan, chronicle []si
    · 【背景素材】→ 章首一句过渡带过（"这段时间，日子照旧，但有些东西在变"），**严禁展开成完整场景**
    · 没有任何事发生的时段 → **直接跳过**，不要为凑字数写流水账
    · 宁可章节稍短，也不要注水；平淡章写短，高潮章写足` + sim.WritingCraftSkills()
+
+	// 两段式管线：注入叙事规划层产出的大纲（写手按此结构写，不再"翻译"编年史）
+	if narrativePlan != "" {
+		system += narrativePlan
+	}
 
 	// 跨章记忆注入：前情提要（防遗忘）+ 未回收伏笔（防断头）
 	if w.PrevSummary != "" {
