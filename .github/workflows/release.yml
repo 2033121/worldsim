@@ -55,6 +55,30 @@ jobs:
           done
           ls -la
 
+      - name: Build plugin binary (linux/arm64)
+        run: |
+          mkdir -p dist/pluginbin
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "-s -w" -o dist/pluginbin/worldsim .
+
+      - name: Assemble Operit plugin + MCP
+        run: |
+          cd dist
+          mkdir -p plugin/wsdata/worldbooks plugin/wsdata/material
+          cp pluginbin/worldsim plugin/worldsim
+          cp ../scripts/run.sh plugin/run.sh
+          cp ../operit-plugin/worldsim.js ../operit-plugin/SKILL.md ../operit-plugin/TESTING.md ../operit-plugin/README.md plugin/
+          cp -r ../worldbooks/* plugin/wsdata/worldbooks/
+          cp -r ../material/* plugin/wsdata/material/
+          printf '{\n  "api_key": "YOUR_API_KEY",\n  "base_url": "https://your-api-endpoint/v1",\n  "model": "your-model"\n}\n' > plugin/wsdata/api.json.example
+          zip -r "worldsim_plugin_${{ github.ref_name }}.zip" plugin
+          rm -rf plugin pluginbin
+          mkdir mcp
+          cp -r ../worldsim-mcp mcp/
+          cp ../AGENTS.md mcp/
+          (cd mcp && zip -r "../worldsim-mcp-${{ github.ref_name }}.zip" .)
+          rm -rf mcp
+          ls -la
+
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
