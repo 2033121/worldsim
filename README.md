@@ -118,16 +118,19 @@ WorldSim 提供标准 MCP Server（`worldsim-mcp/server.py`，零依赖），可
 
 ## 📥 下载
 
-多平台二进制 + 插件包见 [Releases](https://github.com/2033121/worldsim/releases)：
+多平台二进制 + 插件包 + MCP Server 全部见 [Releases](https://github.com/2033121/worldsim/releases)（最新 **v1.3.1**）：
 
 - Linux amd64 / arm64（tar.gz）
 - Windows amd64（zip，含 run.bat 一键启动）
 - macOS amd64 / arm64（tar.gz）
-- worldsim_plugin_v1.2.0.zip（Operit 插件包，直接导入）
+- `worldsim_plugin_v1.3.1.zip`（Operit 插件包，直接导入）
+- `worldsim-mcp-v1.3.1.zip`（Codex/Trae/Claude MCP Server，零依赖）
+
+> 🔄 **发布全自动**：打 `v*` tag 即触发 GitHub Actions 交叉编译 5 平台 + 自动组装插件包/MCP 包，共 7 个资产，无需手动上传。
 
 ## 🔌 Operit 插件包
 
-本仓库是核心源码。打包好的 **Operit 插件包**（沙盒包 25 工具 + Skill + WebUI 控制台 + 15 主题包 + 验收清单）以 zip 形式随 Release 分发，可直接导入 Operit 使用。
+本仓库是核心源码。打包好的 **Operit 插件包**（沙盒包 25 工具 + Skill + WebUI 控制台 + 15 主题包 + 886 条风格素材 + 验收清单）以 zip 形式随 Release 分发（CI 自动组装），可直接导入 Operit 使用。
 
 ## 📂 目录说明
 

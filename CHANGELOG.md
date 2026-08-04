@@ -2,6 +2,16 @@
 
 本项目所有重要变更都记录在此。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [1.3.1] - 2026-08-04
+
+### ✨ 新增
+- 发布流水线全自动化：`operit-plugin/` 资源入库，release.yml 自动编译 ARM64 + 组装 Operit 插件包与 MCP zip
+- 打 `v*` tag 即自动出 7 个资产（5 平台二进制 + 插件包 + MCP），无需手动上传
+
+### 🐛 修复
+- release.yml Windows 架构提取 bug（`.exe` 后缀导致 arch=exe）
+- release.yml 打包目录与二进制同名冲突（改用 `pkg/` 子目录隔离）
+
 ## [1.3.0] - 2026-08-04
 
 ### ✨ 新增
