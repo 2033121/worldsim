@@ -32,6 +32,10 @@ worldsim_plugin.zip
 .vscode/
 *.swp
 .DS_Store
+# ===== Python（MCP server）=====
+__pycache__/
+*.pyc
+.venv/
 
 # ===== 插件包分发（单独分发，不入源码库）=====
 /plugins/

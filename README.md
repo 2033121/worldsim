@@ -1,5 +1,12 @@
 # WorldSim · 多Agent世界模拟器 → 网文生产引擎
 
+[![CI](https://github.com/2033121/worldsim/actions/workflows/ci.yml/badge.svg)](https://github.com/2033121/worldsim/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/2033121/worldsim/blob/main/LICENSE)
+[![Go Version](https://img.shields.io/badge/Go-1.22+-00ADD8.svg)](https://go.dev/)
+[![Zero Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)](#)
+[![Release](https://img.shields.io/github/v/release/2033121/worldsim?color=orange)](https://github.com/2033121/worldsim/releases)
+[![Stars](https://img.shields.io/github/stars/2033121/worldsim)](https://github.com/2033121/worldsim/stargazers)
+
 > 让 AI 模拟"一个世界真实地运转"，再把世界编年史自动改写成人味十足的小说。
 > 基于 [Nigh/show-me-the-story](https://github.com/Nigh/show-me-the-story) 深度改造（Go 单二进制 + WebUI，零外部依赖）。
 
