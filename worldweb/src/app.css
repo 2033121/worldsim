@@ -1,0 +1,174 @@
+@import "tailwindcss";
+
+@plugin "daisyui" {
+  themes: false;
+}
+
+/* 明亮宣纸水墨主题：直接硬编码 CSS 变量，确保覆盖 daisyui 默认 dark */
+:root, [data-theme] {
+  color-scheme: light;
+  --color-base-100: oklch(97% 0.012 90);
+  --color-base-200: oklch(93% 0.015 90);
+  --color-base-300: oklch(89% 0.018 90);
+  --color-base-content: oklch(26% 0.02 60);
+  --color-primary: oklch(48% 0.09 40);
+  --color-primary-content: oklch(98% 0.01 90);
+  --color-secondary: oklch(45% 0.07 210);
+  --color-secondary-content: oklch(98% 0.01 90);
+  --color-accent: oklch(62% 0.16 40);
+  --color-accent-content: oklch(98% 0.01 90);
+  --color-neutral: #5a4e3f;
+  --color-neutral-content: oklch(98% 0.01 90);
+  --color-info: oklch(55% 0.08 210);
+  --color-info-content: oklch(98% 0.01 90);
+  --color-success: oklch(52% 0.11 150);
+  --color-success-content: oklch(98% 0.01 90);
+  --color-warning: oklch(62% 0.16 70);
+  --color-warning-content: oklch(98% 0.01 90);
+  --color-error: oklch(55% 0.16 25);
+  --color-error-content: oklch(98% 0.01 90);
+  --radius-selector: 0.5rem;
+  --radius-field: 0.375rem;
+  --radius-box: 0.75rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.3125rem;
+  --border: 1px;
+  --depth: 1;
+  --noise: 0;
+}
+
+@theme {
+  --font-sans: "Noto Serif SC", "Source Han Serif SC", "Songti SC", ui-serif, Georgia, serif;
+  --font-serif: "Noto Serif", "Noto Serif SC", ui-serif, Georgia, serif;
+  --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, "Cascadia Code", monospace;
+}
+
+html, body, #app {
+  height: 100vh;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  color: oklch(28% 0.02 60);
+  background:
+    radial-gradient(1100px 500px at 12% -5%, rgba(180, 140, 90, 0.10), transparent),
+    radial-gradient(900px 500px at 95% 0%, rgba(200, 160, 110, 0.08), transparent),
+    radial-gradient(1000px 700px at 50% 115%, rgba(190, 120, 90, 0.06), transparent),
+    oklch(96.5% 0.012 90);
+}
+
+/* 宣纸纹理面板 */
+.paper {
+  background: linear-gradient(180deg, oklch(99% 0.01 90), oklch(96% 0.012 90));
+  border: 1px solid rgba(120, 95, 60, 0.18);
+}
+
+/* 卷轴质感丝带 */
+.scroll-rule {
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, rgba(150, 110, 60, 0.35), transparent);
+  position: relative;
+}
+.scroll-rule::before {
+  content: "❖";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  color: rgba(150, 110, 60, 0.55);
+  font-size: 9px;
+  background: oklch(97% 0.012 90);
+  padding: 0 8px;
+}
+
+/* 印章式徽章 */
+.seal {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: "Noto Serif SC", serif;
+  transform: rotate(-3deg);
+  box-shadow: 0 0 10px rgba(190, 60, 50, 0.2);
+}
+
+/* 水墨晕染按钮 */
+.btn-ink {
+  background: linear-gradient(135deg, rgba(150, 110, 60, 0.12), rgba(150, 110, 60, 0.05));
+  border: 1px solid rgba(150, 110, 60, 0.3);
+}
+.btn-ink:hover {
+  background: linear-gradient(135deg, rgba(150, 110, 60, 0.2), rgba(150, 110, 60, 0.08));
+  border-color: rgba(150, 110, 60, 0.5);
+  transform: translateY(-1px);
+}
+
+/* 云纹装饰 */
+.cloud-icon {
+  color: rgba(150, 110, 60, 0.6);
+}
+
+/* Toast 动画 */
+.toast-enter {
+  animation: toast-in 0.3s ease-out;
+}
+@keyframes toast-in {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+/* 淡入 */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+.fade-in { animation: fade-in 0.25s ease; }
+
+/* 自定义滚动条 */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(120, 95, 60, 0.25);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(120, 95, 60, 0.4);
+}
+
+/* 小说正文 */
+.novel-content {
+  white-space: pre-wrap;
+  line-height: 2;
+  font-family: var(--font-serif);
+}
+
+/* 编年史条目 */
+.chronicle-entry {
+  border-left: 3px solid rgba(150, 110, 60, 0.25);
+  transition: all 0.15s;
+}
+.chronicle-entry:hover {
+  border-left-color: rgba(150, 110, 60, 0.7);
+  background: rgba(150, 110, 60, 0.05);
+}
+
+/* 标记颜色 */
+.tag-FACT { color: oklch(52% 0.11 150); }
+.tag-STATE { color: oklch(55% 0.08 210); }
+.tag-SAY { color: oklch(62% 0.16 40); }
+.tag-SUMMARY { color: oklch(62% 0.16 70); }
+
+/* 决策选项 */
+.opt-btn {
+  transition: all 0.15s;
+}
+.opt-btn:hover {
+  border-color: oklch(52% 0.11 150);
+  background: rgba(70, 160, 110, 0.08);
+}
+.opt-btn.chosen {
+  border-color: oklch(62% 0.16 40);
+  background: rgba(190, 120, 90, 0.1);
+}

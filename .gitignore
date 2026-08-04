@@ -38,3 +38,10 @@ __pycache__/
 # ===== 插件包分发（单独分发，不入源码库）=====
 /plugins/
 /tmp/
+
+# ===== 前端构建 =====
+node_modules/
+frontend/dist/
+frontend/node_modules/
+worldweb/node_modules/
+static/assets/
