@@ -1,5 +1,5 @@
 <script>
-  import { j, escapeHtml } from '../lib/api.js';
+  import { j } from '../lib/api.js';
   import { refreshTick, heroName, lastResult } from '../lib/stores.js';
 
   let dialogue = [];
@@ -27,9 +27,9 @@
         {@const me = t.speaker.includes($heroName) || t.speaker === 'protagonist'}
         <div class="flex gap-2 text-sm leading-relaxed">
           <span class="shrink-0 text-[11px] font-bold px-2 py-0.5 rounded-md self-start {me ? 'bg-success/15 text-success' : 'bg-secondary/15 text-secondary'}">
-            {escapeHtml(t.speaker.replace('npc_', ''))}
+            {t.speaker.replace('npc_', '')}
           </span>
-          <span class="text-base-content/85">{escapeHtml(t.speech)}</span>
+          <span class="text-base-content/85">{t.speech}</span>
         </div>
       {/each}
     </div>

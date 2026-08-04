@@ -1,5 +1,5 @@
 <script>
-  import { j, escapeHtml } from '../lib/api.js';
+  import { j } from '../lib/api.js';
   import { refreshTick, toast } from '../lib/stores.js';
 
   let plans = [];
@@ -57,8 +57,8 @@
 
   {#if viewing}
     <div class="novel-content text-base-content/85 max-h-[68vh] overflow-y-auto p-5 rounded-lg bg-base-200/50 border border-base-content/10">
-      <h3 class="text-center text-lg font-semibold mb-4">{escapeHtml(viewing.title)}</h3>
-      {escapeHtml(viewing.content)}
+      <h3 class="text-center text-lg font-semibold mb-4">{viewing.title}</h3>
+      {viewing.content}
     </div>
   {:else}
     {#if !plans.length}
@@ -70,7 +70,7 @@
         {#each plans as p (p.num)}
           <button class="w-full flex items-center gap-3 p-4 rounded-xl bg-base-200/50 border border-base-content/10 hover:border-primary/40 transition-all cursor-pointer" on:click={() => readChapter(p.num)}>
             <span class="text-xs font-bold text-primary w-8 shrink-0">{String(p.num).padStart(2, '0')}</span>
-            <span class="flex-1 font-semibold text-sm text-left">{escapeHtml(p.title || ('第' + p.num + '章'))}</span>
+            <span class="flex-1 font-semibold text-sm text-left">{p.title || ('第' + p.num + '章')}</span>
             <span class="text-xs {p.status === 'done' ? 'text-success' : 'text-base-content/40'} shrink-0">
               {p.status === 'done' ? '✅ 已生成' : '⏳ 待生成'}
             </span>

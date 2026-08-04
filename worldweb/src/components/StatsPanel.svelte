@@ -1,5 +1,5 @@
 <script>
-  import { j, escapeHtml } from '../lib/api.js';
+  import { j } from '../lib/api.js';
   import { refreshTick } from '../lib/stores.js';
 
   let stats = null;
@@ -41,8 +41,8 @@
         <div class="space-y-1">
           {#each stats.spans.slice(-8).reverse() as s}
             <div class="flex justify-between py-1 text-xs">
-              <span class="text-base-content/60">{escapeHtml(s.name || s.agent || '')}</span>
-              <span class="text-base-content/40">{escapeHtml(s.model || '')} · {s.tokens || 0}t</span>
+              <span class="text-base-content/60">{s.name || s.agent || ''}</span>
+              <span class="text-base-content/40">{s.model || ''} · {s.tokens || 0}t</span>
             </div>
           {/each}
         </div>

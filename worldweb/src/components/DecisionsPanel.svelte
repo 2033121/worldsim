@@ -1,5 +1,5 @@
 <script>
-  import { j, escapeHtml } from '../lib/api.js';
+  import { j } from '../lib/api.js';
   import { refreshTick, toast } from '../lib/stores.js';
 
   let decisions = [];
@@ -45,17 +45,17 @@
         <div class="rounded-xl bg-base-200/50 border border-base-content/10 p-4">
           <div class="flex items-center gap-2 flex-wrap mb-2">
             <span class="text-xs font-bold text-primary">D{dc.day}</span>
-            <span class="badge badge-ghost badge-xs">{escapeHtml(dc.type || '')}</span>
-            <span class="flex-1 font-semibold text-sm">{escapeHtml(dc.title || '')}</span>
+            <span class="badge badge-ghost badge-xs">{dc.type || ''}</span>
+            <span class="flex-1 font-semibold text-sm">{dc.title || ''}</span>
             <span class="badge badge-xs {info.cls}">{info.txt}</span>
           </div>
           <div class="text-sm text-base-content/70 bg-base-200/60 border-l-2 border-base-content/20 pl-3 py-2 mb-2 rounded">
-            {escapeHtml(dc.context || '')}
+            {dc.context || ''}
           </div>
           {#if dc.ai_choice}
             <div class="text-xs text-base-content/60 bg-primary/5 border border-primary/20 rounded-lg p-2 mb-2">
-              <b class="text-primary">AI 代决：→ {escapeHtml(dc.ai_choice)}</b>
-              <div class="mt-0.5 text-base-content/50">{escapeHtml(dc.ai_reason || '')}</div>
+              <b class="text-primary">AI 代决：→ {dc.ai_choice}</b>
+              <div class="mt-0.5 text-base-content/50">{dc.ai_reason || ''}</div>
             </div>
           {/if}
           <div class="space-y-1.5">
@@ -67,8 +67,8 @@
               >
                 <span class="shrink-0 text-[11px] font-bold w-5 h-5 rounded-md bg-primary/15 text-primary flex items-center justify-center">{o.id}</span>
                 <span class="flex-1 leading-relaxed">
-                  {escapeHtml(o.desc)}
-                  {#if o.reason}<span class="block text-xs text-base-content/50 mt-0.5">→ {escapeHtml(o.reason)}</span>{/if}
+                  {o.desc}
+                  {#if o.reason}<span class="block text-xs text-base-content/50 mt-0.5">→ {o.reason}</span>{/if}
                 </span>
               </button>
             {/each}

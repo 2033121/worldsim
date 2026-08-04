@@ -1,5 +1,5 @@
 <script>
-  import { j, escapeHtml } from '../lib/api.js';
+  import { j } from '../lib/api.js';
   import { refreshTick } from '../lib/stores.js';
 
   let events = [];
@@ -26,10 +26,10 @@
       {#each events as e}
         <div class="rounded-xl bg-base-200/50 border border-base-content/10 p-4 hover:border-primary/40 transition-all">
           <div class="flex items-center gap-2">
-            <span class="font-semibold text-sm text-primary">{escapeHtml(e.title)}</span>
+            <span class="font-semibold text-sm text-primary">{e.title}</span>
             <span class="text-xs text-warning shrink-0">sev {e.severity.toFixed(2)}</span>
           </div>
-          <div class="text-xs text-base-content/70 leading-relaxed mt-1">{escapeHtml(e.frame)}</div>
+          <div class="text-xs text-base-content/70 leading-relaxed mt-1">{e.frame}</div>
         </div>
       {/each}
     </div>

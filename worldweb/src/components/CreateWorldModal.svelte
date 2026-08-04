@@ -1,5 +1,5 @@
 <script>
-  import { j, escapeHtml } from '../lib/api.js';
+  import { j } from '../lib/api.js';
   import { toast, refreshAll } from '../lib/stores.js';
 
   let visible = false;
@@ -55,7 +55,7 @@
       <select class="select select-sm select-bordered w-full mb-2" bind:value={newTheme}>
         <option value="">（手动指定世界书）</option>
         {#each themes as t}
-          <option value={t}>{escapeHtml(t)}</option>
+          <option value={t}>{t}</option>
         {/each}
       </select>
 

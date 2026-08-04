@@ -1,5 +1,5 @@
 <script>
-  import { j, escapeHtml } from '../lib/api.js';
+  import { j } from '../lib/api.js';
   import { refreshTick } from '../lib/stores.js';
 
   let entries = [];
@@ -67,7 +67,7 @@
         <div class="chronicle-entry pl-3 py-1.5 text-sm leading-relaxed {e.visibility === 'restricted' || e.visibility === 'private' ? 'opacity-45' : ''}">
           <span class="text-[10px] font-bold mr-1 {kindClass(e.kind)}">{e.kind}</span>
           <span class="text-[10px] text-base-content/40">D{e.day}</span>
-          <div class="text-base-content/85">{escapeHtml(e.content)}</div>
+          <div class="text-base-content/85">{e.content}</div>
         </div>
       {/each}
     </div>

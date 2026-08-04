@@ -1,5 +1,5 @@
 <script>
-  import { j, escapeHtml } from '../lib/api.js';
+  import { j } from '../lib/api.js';
   import { refreshTick } from '../lib/stores.js';
 
   let memories = [];
@@ -23,11 +23,11 @@
     <div class="max-h-[68vh] overflow-y-auto space-y-4 pr-1">
       {#each memories as a (a.actor)}
         <div>
-          <div class="text-sm font-semibold text-primary mb-1">🧠 {escapeHtml(a.actor)}</div>
+          <div class="text-sm font-semibold text-primary mb-1">🧠 {a.actor}</div>
           {#each a.memories as m}
             <div class="flex gap-2 py-1 border-b border-dashed border-base-content/10 text-sm leading-relaxed">
               <span class="shrink-0 text-[10px] text-warning font-bold mt-0.5">{(m.importance * 100).toFixed(0)}%</span>
-              <span class="text-base-content/80">{escapeHtml(m.content)}</span>
+              <span class="text-base-content/80">{m.content}</span>
             </div>
           {/each}
         </div>

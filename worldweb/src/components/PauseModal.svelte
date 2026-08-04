@@ -1,6 +1,4 @@
 <script>
-  import { escapeHtml } from '../lib/api.js';
-
   let visible = false;
   let data = null;
 
@@ -22,14 +20,14 @@
       </div>
 
       <div class="text-sm leading-relaxed text-base-content/85">
-        {escapeHtml(data.results?.[data.results.length - 1]?.pauseMsg || '发生重大事件')}
+        {data.results?.[data.results.length - 1]?.pauseMsg || '发生重大事件'}
       </div>
 
       {#if data.results?.[data.results.length - 1]?.events?.[0]?.options?.length}
         <div class="mt-4 space-y-2">
           {#each data.results[data.results.length - 1].events[0].options as o, i}
             <div class="rounded-xl bg-base-200/50 border border-base-content/15 p-4 text-sm cursor-pointer hover:border-warning/50 transition-all" on:click={hide}>
-              {i + 1}. {escapeHtml(o)}
+              {i + 1}. {o}
             </div>
           {/each}
         </div>

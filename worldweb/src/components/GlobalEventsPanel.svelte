@@ -1,6 +1,5 @@
 <script>
   import { worldState } from '../lib/stores.js';
-  import { escapeHtml } from '../lib/api.js';
 </script>
 
 <div class="paper rounded-xl p-4">
@@ -11,7 +10,7 @@
   {#if $worldState?.world_level?.global_events?.length}
     <div class="text-sm leading-relaxed text-base-content/80 space-y-1">
       {#each $worldState.world_level.global_events as ev}
-        <div>· {escapeHtml(ev)}</div>
+        <div>· {ev}</div>
       {/each}
     </div>
   {:else}

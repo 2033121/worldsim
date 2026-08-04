@@ -1,5 +1,5 @@
 <script>
-  import { j, escapeHtml } from '../lib/api.js';
+  import { j } from '../lib/api.js';
   import { refreshTick } from '../lib/stores.js';
 
   let foreshadows = '';
@@ -21,7 +21,7 @@
     <div class="text-sm text-base-content/40">暂无未回收伏笔</div>
   {:else}
     <div class="whitespace-pre-wrap text-sm leading-relaxed text-warning/90 max-h-[40vh] overflow-y-auto p-3 rounded-lg bg-warning/5 border border-warning/20">
-      {escapeHtml(foreshadows)}
+      {foreshadows}
     </div>
   {/if}
 </div>

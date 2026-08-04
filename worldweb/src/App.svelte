@@ -61,8 +61,9 @@
         loadWorlds();
         loadState();
         loadLoop();
+        refreshAll(); // 触发各面板重新加载，实现自动刷新
       }
-    }, 12000);
+    }, 8000);
     return () => window.removeEventListener('ws:create-world', onCreateWorld);
   });
 

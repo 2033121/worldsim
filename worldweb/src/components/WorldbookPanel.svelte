@@ -1,5 +1,5 @@
 <script>
-  import { j, escapeHtml } from '../lib/api.js';
+  import { j } from '../lib/api.js';
   import { refreshTick } from '../lib/stores.js';
 
   let content = '';
@@ -21,7 +21,7 @@
     <div class="text-sm text-base-content/40 text-center py-6">（世界书为空）</div>
   {:else}
     <div class="whitespace-pre-wrap text-sm leading-relaxed text-base-content/80 max-h-[68vh] overflow-y-auto p-5 rounded-lg bg-base-200/50 border border-base-content/10">
-      {escapeHtml(content)}
+      {content}
     </div>
   {/if}
 </div>

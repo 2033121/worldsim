@@ -1,6 +1,5 @@
 <script>
   import { worldState } from '../lib/stores.js';
-  import { escapeHtml } from '../lib/api.js';
 </script>
 
 <div class="paper rounded-xl p-4">
@@ -14,9 +13,9 @@
     <div class="grid gap-2 sm:grid-cols-2 pr-1">
       {#each Object.entries($worldState.entities) as [k, e]}
         <div class="rounded-xl bg-base-200/50 border border-base-content/10 p-4 hover:border-primary/40 transition-all">
-          <div class="font-semibold text-sm">{escapeHtml(k)}</div>
+          <div class="font-semibold text-sm">{k}</div>
           <div class="text-xs text-base-content/50 mt-1 leading-relaxed">
-            {escapeHtml(e.job || '')} · {escapeHtml(e.location || '')}{e.health ? ' · 健康' + e.health : ''}
+            {e.job || ''} · {e.location || ''}{e.health ? ' · 健康' + e.health : ''}
           </div>
         </div>
       {/each}

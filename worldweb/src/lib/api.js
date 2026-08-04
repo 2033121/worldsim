@@ -8,15 +8,6 @@ export async function j(url, opt) {
   }
 }
 
-export function escapeHtml(s) {
-  if (s == null) return '';
-  return String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
 export const MODELS = [
   'deepseek-v4-flash', 'deepseek-v4-flash-0731', 'deepseek-v4-pro',
   'glm-5', 'glm-5.1', 'glm-5.2',
