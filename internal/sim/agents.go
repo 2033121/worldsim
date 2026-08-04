@@ -81,7 +81,7 @@ func WorldAdvanceLLM(ctx context.Context, c *LLMClient, st *engine.WorldState, e
    —— 重要：entities 路径必须带字段（如 entities.主角名.location），禁止只写 entities.主角名；路径里不要有空格。
 4. 保持世界内在一致：张力随事件演化；推进要符合世界书规则；可以按 B3 弧线建议引导事件走向，但不要直接替主角决定行动。
 5. 未回收伏笔必须有"持续存在感"：不能写没、不能自行了结——它们是待回收的坑，世界推进要让它们继续存在甚至酝酿。
-6. 当前剧情段落的目标/反派/爽点要配合：世界推进为段落服务，别把段落的张力写泄了。`
+6. 当前剧情段落的目标/反派/爽点要配合：世界推进为段落服务，别把段落的张力写泄了。` + WorldBuildingSkills()
 
 	user := fmt.Sprintf("当前世界状态：\n%s\n今天发生的事件：\n%s\n未回收伏笔（推进时保持存在感，别写没）：\n%s\n当前剧情段落（世界要配合的目标）：\n%s\n请输出本日的世界推进提案（1-4条变更，含张力调整与天气）。", stateJSON, formatEvents(events), openForeshadows, arcPlan)
 
@@ -180,7 +180,7 @@ func GMAgentLLM(ctx context.Context, c *LLMClient, st *engine.WorldState, wb *wo
 3. 主角必须有目标（goal），反派必须"动"（villain），本段要有爽点（payoff）——这是网文的骨架。
 4. 时间跨度灵活：剧情需要几天就几天，需要几个月就几个月（配 time_hint）。
 5. 只输出 JSON，不要其他文字。
-6. 节奏铁律（网文松紧章）：一个段落里要有张有弛——milestones 不必全是高潮，可以"紧（冲突/危机）→松（过渡/生活/关系升温）→紧（升级/反转）"交替；憋了几天的压抑之后必须安排一次"释放"（爽点/真相/突破）；连续高张力段落之间要有喘息的生活段落，避免读者疲劳。`
+6. 节奏铁律（网文松紧章）：一个段落里要有张有弛——milestones 不必全是高潮，可以"紧（冲突/危机）→松（过渡/生活/关系升温）→紧（升级/反转）"交替；憋了几天的压抑之后必须安排一次"释放"（爽点/真相/突破）；连续高张力段落之间要有喘息的生活段落，避免读者疲劳。` + StructureSkills()
 	user := fmt.Sprintf("世界背景：\n%s\n主角：%s\n当前状态：\n%s\n当前张力：%.2f\n未回收伏笔（接住它们）：\n%s\n最近发生的事（编年史摘要）：\n%s\n请规划下一个剧情段落。", worldCtx, heroName, heroJSON, tension, openForeshadows, chronicleSummary)
 	raw, err := c.CompleteTier(ctx, "fast", system, user)
 	if err != nil {
@@ -227,7 +227,7 @@ func DriftAgentLLM(ctx context.Context, c *LLMClient, st *engine.WorldState, her
 2. **铺垫是"慢慢攒"的**：每一条都要和前面的铺垫/事件有连续性（上次的异样→这次更明显了），为将来的爆发蓄力。
 3. content 要有"可写性"：具体、有画面、能直接放进小说里当一个细节/一句心理，禁止空话（"一切如常"）。
 4. 返回 1~2 条即可，宁缺毋滥；今天真没有任何可写的暗流，返回空数组 []。
-5. days 表示这段铺垫覆盖的天数（1~5，通常1-2）：铺垫期时间照常流动，不必每天都写。`
+5. days 表示这段铺垫覆盖的天数（1~5，通常1-2）：铺垫期时间照常流动，不必每天都写。` + DriftSkills()
 	user := fmt.Sprintf("主角：%s\n当前状态：\n%s\n距上次戏剧事件约 %d 天\n天气：%s\n最近发生的事：\n%s\n未回收伏笔（在暗地里酝酿，铺垫要推进它们）：\n%s\n请捕捉今天值得写的铺垫。", heroName, heroJSON, daysSince, weather, lastEvents, openForeshadows)
 	raw, err := c.CompleteTier(ctx, "fast", system, user)
 	if err != nil {

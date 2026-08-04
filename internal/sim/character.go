@@ -16,18 +16,18 @@ import (
 
 // CharacterSheet 完整人设卡（存 extra.persona_sheet，JSON字符串）
 type CharacterSheet struct {
-	Name        string   `json:"name"`
-	Role        string   `json:"role"` // protagonist | love_interest | important_npc | rival | npc（可演化）
-	Age         string   `json:"age"`
-	Identity    string   `json:"identity"`    // 职业/身份
+	Name      string   `json:"name"`
+	Role      string   `json:"role"` // protagonist | love_interest | important_npc | rival | npc（可演化）
+	Age       string   `json:"age"`
+	Identity  string   `json:"identity"`  // 职业/身份
 	Personality []string `json:"personality"` // 性格特质（3-5个）：谨慎/固执/热心/毒舌…
-	Habits      []string `json:"habits"`      // 习惯/小动作/口头禅（2-3个）
-	Social      []string `json:"social"`      // 社交/人脉/对谁什么态度（2-3条）
-	Behavior    []string `json:"behavior"`    // 行为方式/决策倾向（2-3条）
-	Thinking    []string `json:"thinking"`    // 思考方式/价值观/底层逻辑（2-3条）
-	Motives     []string `json:"motives"`     // 目标：短期+长期（2条）
-	Fears       []string `json:"fears"`       // 软肋/恐惧（1-2条）
-	Secret      string   `json:"secret"`      // 秘密（他自己知道，别人不知道）
+	Habits    []string `json:"habits"`    // 习惯/小动作/口头禅（2-3个）
+	Social    []string `json:"social"`    // 社交/人脉/对谁什么态度（2-3条）
+	Behavior  []string `json:"behavior"`  // 行为方式/决策倾向（2-3条）
+	Thinking  []string `json:"thinking"`  // 思考方式/价值观/底层逻辑（2-3条）
+	Motives   []string `json:"motives"`   // 目标：短期+长期（2条）
+	Fears     []string `json:"fears"`     // 软肋/恐惧（1-2条）
+	Secret    string   `json:"secret"`    // 秘密（他自己知道，别人不知道）
 }
 
 // SheetPrompt 生成可注入 prompt 的角色档案文本（让NPC言行有灵魂且一致）
@@ -81,7 +81,7 @@ func CharacterSheetLLM(ctx context.Context, c *LLMClient, name, identity, hint s
    · 口头禅：一句反复出现的口头语，能体现性格（老江湖呛人挤牙膏；修士爱说"大道至简"）
    · 专属反应：遇到特定情况时的个人化反应（紧张会笑的人/难过会吃东西的人/生气时反而安静的人）
    · 专属物件：随身携带、有故事的物件（旧怀表/褪色的护身符/一根总在转的笔）
-   以上四件套写进 habits/social/behavior 相应字段，必须与TA的身份和世界设定自洽，不得套用别的世界的现成符号。`
+   以上四件套写进 habits/social/behavior 相应字段，必须与TA的身份和世界设定自洽，不得套用别的世界的现成符号。` + CharacterDesignSkills()
 	raw, err := c.CompleteTier(ctx, "fast", system, "请设计这张人设卡。")
 	if err != nil {
 		return nil
@@ -145,7 +145,7 @@ func (s *Simulator) BuildCharacterSheet(ctx context.Context, name string) []engi
 			Social:   []string{"认识主角，点头之交"},
 			Behavior: []string{"低调行事"},
 			Thinking: []string{"先观察再行动"}, Motives: []string{"过好自己的日子"},
-			Fears: []string{"被卷进麻烦"}, Secret: "心里藏着一些没说出口的事",
+			Fears:    []string{"被卷进麻烦"}, Secret: "心里藏着一些没说出口的事",
 		}
 	}
 	b, _ := json.Marshal(cs)
