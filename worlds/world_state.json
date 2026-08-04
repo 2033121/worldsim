@@ -1,0 +1,14 @@
+{
+  "revision": 3,
+  "day": 1,
+  "time": "",
+  "weather": "",
+  "world_level": {
+    "global_events": [
+      "城市建立：临江市"
+    ],
+    "factions": null,
+    "tension": 0.2
+  },
+  "entities": {}
+}
