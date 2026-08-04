@@ -101,6 +101,15 @@ curl localhost:48091/api/world/novel/chapter/1
 | 主题包 | `GET /api/worldbooks/themes` |
 | 统计 | `GET /api/world/token_stats` `GET /api/world/sim/thinking` |
 
+## 📥 下载
+
+多平台二进制 + 插件包见 [Releases](https://github.com/2033121/worldsim/releases)：
+
+- Linux amd64 / arm64（tar.gz）
+- Windows amd64（zip，含 run.bat 一键启动）
+- macOS amd64 / arm64（tar.gz）
+- worldsim_plugin_v1.2.0.zip（Operit 插件包，直接导入）
+
 ## 🔌 Operit 插件包
 
 本仓库是核心源码。打包好的 **Operit 插件包**（沙盒包 25 工具 + Skill + WebUI 控制台 + 15 主题包 + 验收清单）以 zip 形式随 Release 分发，可直接导入 Operit 使用。

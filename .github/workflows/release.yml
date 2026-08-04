@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Cross-compile all platforms
+        run: |
+          mkdir -p dist
+          for t in linux/amd64 linux/arm64 windows/amd64 darwin/amd64 darwin/arm64; do
+            os=${t%/*}; arch=${t#*/}
+            exe=""
+            [ "$os" = "windows" ] && exe=".exe"
+            echo "==> building $os/$arch"
+            GOOS=$os GOARCH=$arch CGO_ENABLED=0 go build -ldflags "-s -w" -o "dist/worldsim-$os-$arch$exe" .
+          done
+
+      - name: Package
+        run: |
+          cd dist
+          for bin in worldsim-*; do
+            os_arch=${bin#worldsim-}
+            os=${os_arch%%-*}; arch=${os_arch##*-}
+            dir="worldsim-$os-$arch"
+            mkdir -p "$dir/wsdata/worldbooks"
+            cp "$bin" "$dir/worldsim$([ "$os" = windows ] && echo .exe)"
+            cp ../README.md ../LICENSE "$dir/"
+            cp ../scripts/run.sh "$dir/" 2>/dev/null || true
+            cp ../scripts/run.bat "$dir/" 2>/dev/null || true
+            # 世界书模板 + LLM配置模板
+            if [ -d ../worldbooks ]; then cp -r ../worldbooks/* "$dir/wsdata/worldbooks/" 2>/dev/null || true; fi
+            printf '{\n  "api_key": "YOUR_API_KEY",\n  "base_url": "https://your-api-endpoint/v1",\n  "model": "your-model"\n}\n' > "$dir/wsdata/api.json.example"
+            if [ "$os" = windows ]; then
+              python3 -c "import shutil; shutil.make_archive('$os_arch','zip','.','$dir')" 2>/dev/null || zip -r "$os_arch.zip" "$dir"
+            else
+              tar czf "$os_arch.tar.gz" "$dir"
+            fi
+            rm -rf "$dir"
+          done
+          ls -la
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+          generate_release_notes: true
