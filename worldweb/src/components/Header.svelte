@@ -22,7 +22,7 @@
   <div class="flex items-center gap-2">
     <span class="text-2xl leading-none cloud-icon">☁</span>
     <span class="text-xl font-bold tracking-widest text-primary">WorldSim</span>
-    <span class="text-xs text-base-content/40 mt-1">多世界模拟 · 仙途演算</span>
+    <span class="text-xs text-base-content/40 mt-1">多世界模拟 · AI 世界演绎</span>
   </div>
 
   <div class="flex items-center gap-1.5">
