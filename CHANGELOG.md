@@ -2,11 +2,26 @@
 
 本项目所有重要变更都记录在此。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [1.3.0] - 2026-08-04
+
+### ✨ 新增
+- **Codex / Trae MCP 接入**（`worldsim-mcp/`）：零依赖 Python MCP server（25 工具），Codex config.toml / .mcp.json、Trae MCP 面板双配置指南
+- **仓库根 `AGENTS.md`**：Codex 协作指南（概念/操作/规则/代码结构）
+- **素材库开源入库**：886 条真实网文风格示范（8 大类 127 子类，来源已标注，仅风格参考）
+- **仓库治理全套**：Issue/PR 模板、CONTRIBUTING、SECURITY、CODE_OF_CONDUCT、CHANGELOG、docs/API.md、Dependabot
+- **README 徽章**：CI/License/Go/Release/Stars
+
+### 🔧 工程化
+- CI 增强：gofmt 格式检查 + MCP 语法/协议自检 job + setup-go 缓存
+- gofmt 全量格式化（49 个文件）
+
+### 🐛 修复
+- CI workflow YAML 解析失败：plain scalar 中 `MCP: syntax OK` 冒号+空格被当嵌套 mapping → 改为 `MCP syntax OK`
+
 ## [Unreleased]
 
 ### 🚀 即将到来
-- Codex / Trae MCP 接入（`worldsim-mcp/`，已发布）
-- 项目治理完善（Issue/PR 模板、CONTRIBUTING、SECURITY、CODE_OF_CONDUCT、Dependabot）
+- （规划中）
 
 ## [1.2.0] - 2026-08-04
 
