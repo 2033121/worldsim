@@ -2,9 +2,8 @@
 // 魔改自 Nigh/show-me-the-story（Go 单二进制 + WebUI，零外部依赖）
 //
 // 双端口架构：
-//
-//	:48090 小说创作服务（复用 show-me-the-story 的小说化流水线）
-//	:48091 世界模拟服务（WorldSim State Engine + 调度器，新增）
+//   :48090 小说创作服务（复用 show-me-the-story 的小说化流水线）
+//   :48091 世界模拟服务（WorldSim State Engine + 调度器，新增）
 package main
 
 import (
@@ -41,8 +40,8 @@ var wsWeb embed.FS
 var version = "dev"
 
 const (
-	storyPort = ":48090" // 小说化服务（原项目功能）
-	worldPort = ":48091" // 世界模拟服务（WorldSim 新增）
+	storyPort  = ":48090" // 小说化服务（原项目功能）
+	worldPort  = ":48091" // 世界模拟服务（WorldSim 新增）
 )
 
 func main() {
@@ -109,16 +108,17 @@ func resolveProgDir() string {
 
 // worldInstance 单个世界实例（独立数据目录：worlds/{名字}/）
 type worldInstance struct {
-	name     string
-	dir      string
-	engine   *engine.StateEngine
-	sim      *sim.Simulator
-	llm      *sim.LLMClient
-	wb       *worldbook.Worldbook
-	novelW   *novel.Writer
-	apiCfg   *config.APIConfig
+	name    string
+	dir     string
+	engine  *engine.StateEngine
+	sim     *sim.Simulator
+	llm     *sim.LLMClient
+	wb      *worldbook.Worldbook
+	novelW  *novel.Writer
+	apiCfg  *config.APIConfig
 	heroName string // 主角名（小说写手必须用模拟主角名）
-	created  bool   // 是否已初始化世界状态（主角等）
+	created bool // 是否已初始化世界状态（主角等）
+	lastDay *sim.DayResult // 最近一次模拟结果（手动跑天/后台循环都会更新，供"今日对话/事件"面板）
 }
 
 func (w *worldInstance) ready() bool { return w != nil && w.engine != nil }
@@ -153,6 +153,7 @@ func startWorldServer(worldDir string, apiCfg *config.APIConfig) {
 	mux.HandleFunc("GET /api/worldbooks/themes", ws.handleThemesList)
 	mux.HandleFunc("GET /api/world/worldbook", ws.handleGetWorldbook)
 	mux.HandleFunc("GET /api/world/foreshadows", ws.handleForeshadows)
+	mux.HandleFunc("GET /api/world/today", ws.handleToday)
 	mux.HandleFunc("POST /api/world/loop", ws.handleLoopSet)
 	mux.HandleFunc("GET /api/world/loop", ws.handleLoopStatus)
 
@@ -189,11 +190,11 @@ type worldServer struct {
 	apiCfg  *config.APIConfig
 	novelMu sync.Mutex // 小说生成防重入锁（并发请求会写重复章号）
 
-	loopMu      sync.Mutex // 后台持续运行控制
-	loopRunning bool       // 循环是否在跑
+	loopMu      sync.Mutex    // 后台持续运行控制
+	loopRunning bool          // 循环是否在跑
 	loopCancel  context.CancelFunc
-	loopTarget  int    // 目标 day（世界时间）
-	loopWorld   string // 循环绑定的世界名
+	loopTarget  int           // 目标 day（世界时间）
+	loopWorld   string        // 循环绑定的世界名
 }
 
 // handleThemesList GET /api/worldbooks/themes — 主题包列表（建世界下拉用）
@@ -304,11 +305,13 @@ func (ws *worldServer) handleLoopSet(w http.ResponseWriter, r *http.Request) {
 				return
 			default:
 			}
-			if _, err := inst.sim.RunDay(ctx); err != nil {
-				// 单日失败不中断循环（中转站抖动/超时），但停一会儿再试
-				time.Sleep(1 * time.Second)
-				continue
-			}
+			if res, err := inst.sim.RunDay(ctx); err != nil {
+			// 单日失败不中断循环（中转站抖动/超时），但停一会儿再试
+			time.Sleep(1 * time.Second)
+			continue
+		} else {
+			inst.lastDay = res // 供前端"今日对话/事件"面板
+		}
 			inst.autoSnapshot() // 每30天自动存档（时间回退锚点）
 			// 就绪度驱动：素材够了自动停，等用户看小说
 			if rdy, ok := inst.sim.Readiness()["ready"].(bool); ok && rdy {
@@ -814,17 +817,38 @@ func (ws *worldServer) handleSimDay(w http.ResponseWriter, r *http.Request) {
 		}
 		inst.autoSnapshot() // 每30天自动存档（时间回退锚点）
 		results = append(results, res)
+		inst.lastDay = res // 供前端"今日对话/事件"面板（页面刷新/定时刷新直接拉取）
 		if res.Paused {
 			break // 遇到抉择点暂停（§10）
 		}
 	}
 	ws.writeJSON(w, 200, map[string]any{
+		"ok":        true,
+		"results":   results,
+		"paused":    results[len(results)-1].Paused,
+		"revision":  inst.engine.State().Revision,
+		"day":       inst.engine.State().Day,
+		"cache":     llm.CacheStats(),
+	})
+}
+
+// GET /api/world/today — 最近一天的模拟结果（今日对话/今日事件），供前端面板
+// 手动跑天和后台循环都会更新 inst.lastDay；无数据时返回空（前端显示"无"）
+func (ws *worldServer) handleToday(w http.ResponseWriter, r *http.Request) {
+	inst := ws.inst()
+	if inst == nil {
+		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": "没有可用世界，请先创建"})
+		return
+	}
+	if inst.lastDay == nil {
+		ws.writeJSON(w, 200, map[string]any{"ok": true, "day": 0, "events": []any{}, "dialogue": []any{}})
+		return
+	}
+	ws.writeJSON(w, 200, map[string]any{
 		"ok":       true,
-		"results":  results,
-		"paused":   results[len(results)-1].Paused,
-		"revision": inst.engine.State().Revision,
-		"day":      inst.engine.State().Day,
-		"cache":    llm.CacheStats(),
+		"day":      inst.lastDay.Day,
+		"events":   inst.lastDay.Events,
+		"dialogue": inst.lastDay.Dialogue,
 	})
 }
 
@@ -855,11 +879,11 @@ func (ws *worldServer) handleSetLLM(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Mode       string            `json:"mode"` // mock | real | off
-		BaseURL    string            `json:"base_url"`
-		Model      string            `json:"model"`
-		APIKey     string            `json:"api_key"`
-		ModelTiers map[string]string `json:"model_tiers"` // 模型分层：fast/normal/premium
+		Mode        string            `json:"mode"` // mock | real | off
+		BaseURL     string            `json:"base_url"`
+		Model       string            `json:"model"`
+		APIKey      string            `json:"api_key"`
+		ModelTiers  map[string]string `json:"model_tiers"` // 模型分层：fast/normal/premium
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		ws.writeJSON(w, 400, map[string]string{"error": "请求解析失败: " + err.Error()})
@@ -1060,7 +1084,7 @@ func (ws *worldServer) handleMemories(w http.ResponseWriter, r *http.Request) {
 	}
 	ms := inst.sim.MemoryStore()
 	type actorMem struct {
-		Actor    string            `json:"actor"`
+		Actor   string           `json:"actor"`
 		Memories []sim.MemoryEntry `json:"memories"`
 	}
 	var out []actorMem

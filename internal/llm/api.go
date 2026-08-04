@@ -25,18 +25,22 @@ type ChatRequest struct {
 	MaxTokens     int            `json:"max_tokens,omitempty"`
 }
 
+// llmSem 全局 LLM 并发闸门：所有 HTTP 调用（流式/同步）共用，
+// 限制同时打到中转站的请求数，防止并行 Agent（角色档案/事件生成等）把上游并发打爆（429）。
+var llmSem = make(chan struct{}, 3)
+
 type streamOptions struct {
 	IncludeUsage bool `json:"include_usage"`
 }
 
 type tokenUsage struct {
-	PromptTokens        int `json:"prompt_tokens"`
-	CompletionTokens    int `json:"completion_tokens"`
-	TotalTokens         int `json:"total_tokens"`
-	PromptTokensDetails *struct {
+	PromptTokens          int `json:"prompt_tokens"`
+	CompletionTokens      int `json:"completion_tokens"`
+	TotalTokens           int `json:"total_tokens"`
+	PromptTokensDetails   *struct {
 		CachedTokens int `json:"cached_tokens"`
 	} `json:"prompt_tokens_details,omitempty"`
-	PromptCacheHitTokens  int `json:"prompt_cache_hit_tokens,omitempty"`
+	PromptCacheHitTokens int `json:"prompt_cache_hit_tokens,omitempty"`
 	PromptCacheMissTokens int `json:"prompt_cache_miss_tokens,omitempty"`
 }
 
@@ -89,9 +93,9 @@ type ChatResponse struct {
 
 // CompletionResult is the normalized result of a chat completion call.
 type CompletionResult struct {
-	Content          string
-	ReasoningContent string // 推理模型的思考过程（若有，正文之外另存，不混入正文）
-	FinishReason     string // e.g. "stop", "length"
+	Content           string
+	ReasoningContent  string // 推理模型的思考过程（若有，正文之外另存，不混入正文）
+	FinishReason      string // e.g. "stop", "length"
 }
 
 func hasAPIVersionSegment(u string) bool {
@@ -286,9 +290,10 @@ func CallAPIMessages(ctx context.Context, apiCfg *config.APIConfig, messages []M
 	syncResult, syncErr := CallAPIMessagesSync(ctx, apiCfg, messages)
 	return syncResult.Content, syncErr
 }
-
 // CallAPIMessagesSync 同步 HTTP 调用（仅作流式失败时的回退）。
 func CallAPIMessagesSync(ctx context.Context, apiCfg *config.APIConfig, messages []Message) (res CompletionResult, err error) {
+	llmSem <- struct{}{} // 全局并发闸门（与流式共用）
+	defer func() { <-llmSem }()
 	fullURL := normalizeURL(apiCfg)
 	tracker := TaskTokensFromContext(ctx)
 	tracker.beginCall(messages)
@@ -297,6 +302,7 @@ func CallAPIMessagesSync(ctx context.Context, apiCfg *config.APIConfig, messages
 		// 环节级用量记录（span 从 ctx 取，未标注则不统计；失败也计 Failures）
 		RecordSpan(ctx, apiCfg.Model, lastUsage, countMessageRunes(messages), utf8.RuneCountInString(res.Content), err)
 	}()
+
 
 	reqBody := ChatRequest{
 		Model:     apiCfg.Model,
@@ -450,6 +456,8 @@ func CallAPIStream(ctx context.Context, apiCfg *config.APIConfig, system, user s
 
 // CallAPIStreamMessages 以完整的多轮消息数组调用 API（流式）。
 func CallAPIStreamMessages(ctx context.Context, apiCfg *config.APIConfig, messages []Message, onChunk func(string)) (res CompletionResult, err error) {
+	llmSem <- struct{}{} // 全局并发闸门：限制同时打到中转站的请求数，防止并行 Agent 调用打爆上游
+	defer func() { <-llmSem }()
 	fullURL := normalizeURL(apiCfg)
 	tracker := TaskTokensFromContext(ctx)
 	tracker.beginCall(messages)
@@ -540,21 +548,21 @@ func CallAPIStreamMessages(ctx context.Context, apiCfg *config.APIConfig, messag
 	if result == "" {
 		return CompletionResult{}, fmt.Errorf("流式响应为空")
 	}
-	if streamUsage != nil {
-		if tracker != nil {
-			tracker.finishCall(streamUsage.PromptTokens, streamUsage.CompletionTokens, true, messages, result)
+		if streamUsage != nil {
+			if tracker != nil {
+				tracker.finishCall(streamUsage.PromptTokens, streamUsage.CompletionTokens, true, messages, result)
+			}
+			// 前缀缓存统计（流式，独立于 tracker）
+			cached := 0
+			if streamUsage.PromptTokensDetails != nil {
+				cached = streamUsage.PromptTokensDetails.CachedTokens
+			}
+			if streamUsage.PromptCacheHitTokens > cached {
+				cached = streamUsage.PromptCacheHitTokens
+			}
+			RecordCacheUsage(cached, streamUsage.PromptTokens-cached)
+		} else if tracker != nil {
+			tracker.finishCall(0, 0, false, messages, result)
 		}
-		// 前缀缓存统计（流式，独立于 tracker）
-		cached := 0
-		if streamUsage.PromptTokensDetails != nil {
-			cached = streamUsage.PromptTokensDetails.CachedTokens
-		}
-		if streamUsage.PromptCacheHitTokens > cached {
-			cached = streamUsage.PromptCacheHitTokens
-		}
-		RecordCacheUsage(cached, streamUsage.PromptTokens-cached)
-	} else if tracker != nil {
-		tracker.finishCall(0, 0, false, messages, result)
-	}
 	return CompletionResult{Content: result, FinishReason: finishReason}, nil
 }

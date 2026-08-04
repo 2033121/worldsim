@@ -539,6 +539,7 @@ async function refreshAll(){
   if(th.thinking!==undefined)$('thinking').textContent=th.thinking||'（无）';
   const ch=await j('/api/world/chronicle');
   if(ch.chronicle)renderChronicle(ch.chronicle);
+  loadToday();
   const me=await j('/api/world/memories');
   if(me.memories!==undefined)renderMemories(me.memories);
   renderDecisions();
@@ -575,8 +576,14 @@ function renderChronicle(list){
     return `<div class="entry ${(e.visibility==='restricted'||e.visibility==='private')?'restricted':''}"><span class="tag ${k}">${k}</span><span class="meta">D${e.day}</span><div class="content">${escapeHtml(e.content)}</div></div>`;
   }).join(''):'<div class="empty">运行模拟后生成…</div>';
 }
+/* ---------- 今日对话 / 今日事件（手动跑天与后台循环都会更新 lastDay）---------- */
+async function loadToday(){
+  const d=await j('/api/world/today');
+  if(!d||!d.day)return;
+  renderDialogue(d);renderEvents(d);
+}
 function renderDialogue(d){
-  const last=d.results[d.results.length-1];
+  const last=d.results?d.results[d.results.length-1]:d;
   const dl=last.dialogue||[];
   if(!dl.length){$('dialogue').innerHTML='<div class="empty">无</div>';return}
   $('dialogue').innerHTML=dl.map(t=>{
@@ -585,7 +592,7 @@ function renderDialogue(d){
   }).join('');
 }
 function renderEvents(d){
-  const last=d.results[d.results.length-1];
+  const last=d.results?d.results[d.results.length-1]:d;
   const evs=last.events||[];
   $('events').innerHTML=evs.length?evs.map(e=>`<div class="event-card"><span class="et">${escapeHtml(e.title)}</span><span class="sev">sev ${e.severity.toFixed(2)}</span><div class="frame">${escapeHtml(e.frame)}</div></div>`).join(''):'<div class="empty">无</div>';
 }
