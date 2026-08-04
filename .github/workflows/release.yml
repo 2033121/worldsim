@@ -32,10 +32,11 @@ jobs:
       - name: Package
         run: |
           cd dist
+          mkdir -p pkg
           for bin in worldsim-*; do
             os_arch=${bin#worldsim-}
             os=${os_arch%%-*}; arch=${os_arch#*-}; arch=${arch%.exe}
-            dir="worldsim-$os-$arch"
+            dir="pkg/worldsim-$os-$arch"
             mkdir -p "$dir/wsdata/worldbooks"
             cp "$bin" "$dir/worldsim$([ "$os" = windows ] && echo .exe)"
             cp ../README.md ../LICENSE "$dir/"
@@ -45,9 +46,10 @@ jobs:
             if [ -d ../worldbooks ]; then cp -r ../worldbooks/* "$dir/wsdata/worldbooks/" 2>/dev/null || true; fi
             printf '{\n  "api_key": "YOUR_API_KEY",\n  "base_url": "https://your-api-endpoint/v1",\n  "model": "your-model"\n}\n' > "$dir/wsdata/api.json.example"
             if [ "$os" = windows ]; then
-              python3 -c "import shutil; shutil.make_archive('$os_arch','zip','.','$dir')" 2>/dev/null || zip -r "$os_arch.zip" "$dir"
+              zip_base=${os_arch%.exe}
+              python3 -c "import shutil; shutil.make_archive('$zip_base','zip','pkg','worldsim-$os-$arch')" 2>/dev/null || (cd pkg && zip -r "$zip_base.zip" "worldsim-$os-$arch")
             else
-              tar czf "$os_arch.tar.gz" "$dir"
+              tar czf "$os_arch.tar.gz" -C pkg "worldsim-$os-$arch"
             fi
             rm -rf "$dir"
           done
