@@ -32,14 +32,30 @@
               <span class="text-base-content/50">🧍 主角</span><span class="font-medium">{k} · {e.job || '-'}</span>
             </div>
             <div class="flex justify-between border-b border-dashed border-base-content/10 py-1">
-              <span class="text-base-content/50">💰 金钱</span><span class="font-medium">¥{e.money ?? '-'}</span>
-            </div>
-            <div class="flex justify-between border-b border-dashed border-base-content/10 py-1">
-              <span class="text-base-content/50">❤️ 健康</span><span class="font-medium">{e.health ?? '-'}</span>
-            </div>
-            <div class="flex justify-between border-b border-dashed border-base-content/10 py-1">
               <span class="text-base-content/50">📍 位置</span><span class="font-medium">{e.location || '-'}</span>
             </div>
+            {#if e.assets && Object.keys(e.assets).length}
+              {#each Object.entries(e.assets) as [aname, aval]}
+                <div class="flex justify-between border-b border-dashed border-base-content/10 py-1">
+                  <span class="text-base-content/50">🏦 {aname}</span><span class="font-medium">{aval}</span>
+                </div>
+              {/each}
+            {:else if e.money != null}
+              <div class="flex justify-between border-b border-dashed border-base-content/10 py-1">
+                <span class="text-base-content/50">💰 金钱</span><span class="font-medium">¥{e.money}</span>
+              </div>
+            {/if}
+            {#if e.body && Object.keys(e.body.vitals || {}).length}
+              {#each Object.entries(e.body.vitals) as [vname, vval]}
+                <div class="flex justify-between border-b border-dashed border-base-content/10 py-1">
+                  <span class="text-base-content/50">❤️ {vname}</span><span class="font-medium">{vval}</span>
+                </div>
+              {/each}
+            {:else if e.health != null}
+              <div class="flex justify-between border-b border-dashed border-base-content/10 py-1">
+                <span class="text-base-content/50">❤️ 健康</span><span class="font-medium">{e.health}</span>
+              </div>
+            {/if}
           {/if}
         {/each}
       {/if}
