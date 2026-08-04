@@ -103,7 +103,7 @@ curl localhost:48091/api/world/novel/chapter/1
 
 ## 🔌 Operit 插件包
 
-本仓库是源码；打包好的 **Operit 插件包**（沙盒包 25 工具 + Skill + WebUI + 15 主题包）见 `/sdcard/Download/Operit/plugins/worldsim/`（分发 zip：`worldsim_plugin.zip`），含 README/TESTING 验收清单。
+本仓库是核心源码。打包好的 **Operit 插件包**（沙盒包 25 工具 + Skill + WebUI 控制台 + 15 主题包 + 验收清单）以 zip 形式随 Release 分发，可直接导入 Operit 使用。
 
 ## 📂 目录说明
 
