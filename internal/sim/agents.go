@@ -47,10 +47,10 @@ func (c *LLMClient) CompleteTier(ctx context.Context, tier, system, user string)
 // ---------- 世界 Agent（LLM）：世界推进 + 张力评估 → 状态变更提案 ----------
 
 type worldAdvanceRequest struct {
-	Day     int         `json:"day"`
-	Weather string      `json:"weather"`
-	Tension float64     `json:"tension"`
-	Events  []EventCard `json:"events"`
+	Day      int     `json:"day"`
+	Weather  string  `json:"weather"`
+	Tension  float64 `json:"tension"`
+	Events   []EventCard `json:"events"`
 }
 
 // WorldAdvanceLLM 让世界 Agent 用 LLM 决定本日世界变化（天气/全局事件/张力/势力动向）
@@ -192,9 +192,9 @@ func GMAgentLLM(ctx context.Context, c *LLMClient, st *engine.WorldState, wb *wo
 	}
 	// 校验基本字段
 	var chk struct {
-		ArcName    string   `json:"arc_name"`
-		Goal       string   `json:"goal"`
-		Villain    string   `json:"villain"`
+		ArcName string   `json:"arc_name"`
+		Goal    string   `json:"goal"`
+		Villain string   `json:"villain"`
 		Milestones []string `json:"milestones"`
 	}
 	if err := json.Unmarshal([]byte(jsonStr), &chk); err != nil || strings.TrimSpace(chk.ArcName) == "" {
@@ -266,7 +266,7 @@ func EventGenLLM(ctx context.Context, c *LLMClient, st *engine.WorldState, wb *w
 0. 世界背景与事件类型（严格遵守）：
 ` + worldCtx + `
 1. 输出严格 JSON 数组，格式：
-[{"id":"ev-001-1","type":"daily|conflict|wonder|romance|opportunity|crisis|revelation|luck|disaster|quest|mystery|rival|milestone|windfall|slice","title":"...","location":"本世界地点（从世界背景里取）","severity":0.1,"frame":"遭遇场景描述（不含NPC具体言行）","first_actor":"protagonist|npc_某角色名","npcs":["某角色名"],"new_characters":[{"name":"新角色名","gender":"女","identity":"...","persona":"一句话人设","location":"出场地点","role_hint":"love_interest|important_npc|rival|npc"}],"rel_effect":"感情/关系影响说明","foreshadow":"伏笔名","next_events":[{"title":"后续事件标题","frame":"后续事件框架"}],"options":["...","..."]}]
+[{"id":"ev-001-1","type":"daily|conflict|wonder|romance|opportunity|crisis|revelation|luck|disaster|quest|mystery|rival|milestone|windfall|slice","title":"...","location":"本世界地点（从世界背景里取）","severity":0.1,"frame":"遭遇场景描述（不含NPC具体言行）","first_actor":"protagonist|npc_某角色名","npcs":["某角色名"],"new_characters":[{"name":"新角色名","gender":"女","identity":"...","persona":"一句话人设","location":"出场地点","role_hint":"love_interest|important_npc|rival|npc"}],"rel_effect":"感情/关系影响说明","foreshadow":"伏笔名","resolve_foreshadow":"伏笔名","next_events":[{"title":"后续事件标题","frame":"后续事件框架"}],"options":["...","..."]}]
 2. severity 0~1：日常0.1-0.3、冲突0.4-0.6、奇遇/重大/感情进展0.7-0.9（0.75以上会触发用户抉择）；**slice（生活切片）0.2-0.4**
 3. frame 只写"遭遇框架"（场景/氛围/人物出现），NPC 具体说出口的话由 NPC Agent 实时生成
 4. 生成 1-3 个事件，类型尽量多样；与主角当前处境相关（钱少就少消费场景）；优先选用事件类型池里的设定，避免凭空造新元素。
@@ -290,6 +290,7 @@ func EventGenLLM(ctx context.Context, c *LLMClient, st *engine.WorldState, wb *w
    · 钩子九连环：悬念/冲突/反差/危机/金手指/情感/猎奇/爽点/谜题——每天的事件里至少带一个"钩子类型"，让读者想追下去；平淡日也要埋"不对劲"的钩子
    · 伏笔四级：长线（贯穿全书，全书3~5个够）/中线（一个段落内）/短线（1~3天内回收）/隐性（细节彩蛋）——用 foreshadow 字段时标注长度（如"foreshadow":"中线·xx"），埋的时候要自然像随手一笔，别写得太刻意
    · 爽点有密度：爽点（打脸/收获/成长/危机解除）不是每章都要，但要成节奏——连憋几天的段落要安排一次"释放"，别一直压抑
+15. **伏笔回收（收坑）**：下方"未回收伏笔"清单里的坑，是你埋过的——它们必须被回收，不能烂尾。若本事件**正式揭晓/结算/终结**了某个未回收伏笔（真相大白、危机解除、谜底揭开、目标达成），用 resolve_foreshadow 字段填那个伏笔名（**必须与清单里的名字完全一致**，含"中线·""短·"前缀；一个事件最多收一个；只是"提到/推进"不算回收，别填）。**收坑和埋坑同样重要：每天至少考虑一次"今天能不能收一个旧坑"**——优先回收酝酿成熟（"即将爆发"提示里的）的伏笔。
 14. 限制性视角：你生成的是主角的"遭遇"，一切以主角能看到/听到/感觉到的为准——不要安排"主角不可能知道的内心戏或远景事件"作为当天遭遇的主体；主角视角外的暗流可以用 low-key 的方式埋（一句怪话/一个反常细节），但不要直接写明"XX在密谋"。
 10. 世界是很大的：你现在能看到"世界深层"设定（已揭示的部分）——它真实存在并在运转，但主角可能只是偶然接触到冰山一角；不要把深层真相一次性全写出来，让世界"越走越深"。
 11. 未揭示的世界深处（只有风声/线索，还没浮出水面）：
@@ -455,8 +456,8 @@ func NewMockLLM() *LLMClient {
 	return &LLMClient{Mock: func(system, user string) string {
 		switch {
 		case strings.Contains(system, "事件生成器"):
-			// 事件 Agent mock
-			return `[{"id":"mock-ev-1","type":"wonder","title":"反常的异象","location":"常去的地方","severity":0.7,"frame":"天色将暗，一个平日里熟悉的地方透着说不出的反常，隐约有什么在等着。","first_actor":"protagonist","options":["走近看看","绕路离开","叫住旁人问问"]}]`
+	// 事件 Agent mock
+	return `[{"id":"mock-ev-1","type":"wonder","title":"反常的异象","location":"常去的地方","severity":0.7,"frame":"天色将暗，一个平日里熟悉的地方透着说不出的反常，隐约有什么在等着。","first_actor":"protagonist","options":["走近看看","绕路离开","叫住旁人问问"]}]`
 		case strings.Contains(system, "世界引擎"):
 			// 世界 Agent mock
 			return `{"changes":[{"path":"world_level.tension","op":"set","value":0.45},{"path":"world_level.weather","op":"set","value":"雨"},{"path":"world_level.global_events","op":"add","value":"镇上有人议论昨晚的反常动静"}],"reason":"反常事件推高张力"}`
