@@ -162,19 +162,24 @@ func startWorldServer(worldDir string, apiCfg *config.APIConfig) {
 	mux.HandleFunc("POST /api/world/snapshot", ws.handleSnapshot)
 	mux.HandleFunc("POST /api/world/rewind", ws.handleRewind)
 
-	// WebUI 世界模拟面板（单文件前端）
+	// WebUI 世界模拟面板（构建产物，embed 进二进制）
+	wsWebFS, subErr := fs.Sub(wsWeb, "wsweb")
+	if subErr != nil {
+		log.Fatalf("嵌入 wsweb 静态文件失败: %v", subErr)
+	}
+	wsFileServer := http.FileServer(http.FS(wsWebFS))
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
+		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			data, err := wsWeb.ReadFile("wsweb/index.html")
+			if err != nil {
+				http.Error(w, "前端加载失败", 500)
+				return
+			}
+			w.Write(data)
 			return
 		}
-		data, err := wsWeb.ReadFile("wsweb/index.html")
-		if err != nil {
-			http.Error(w, "前端加载失败", 500)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write(data)
+		wsFileServer.ServeHTTP(w, r)
 	})
 
 	if err := http.ListenAndServe(worldPort, mux); err != nil {
