@@ -34,7 +34,7 @@ jobs:
           cd dist
           for bin in worldsim-*; do
             os_arch=${bin#worldsim-}
-            os=${os_arch%%-*}; arch=${os_arch##*-}
+            os=${os_arch%%-*}; arch=${os_arch#*-}; arch=${arch%.exe}
             dir="worldsim-$os-$arch"
             mkdir -p "$dir/wsdata/worldbooks"
             cp "$bin" "$dir/worldsim$([ "$os" = windows ] && echo .exe)"
