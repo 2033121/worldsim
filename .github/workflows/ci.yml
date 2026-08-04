@@ -31,7 +31,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: MCP server 语法检查
-        run: python3 -m py_compile worldsim-mcp/server.py && echo "MCP: syntax OK"
+        run: python3 -m py_compile worldsim-mcp/server.py && echo "MCP syntax OK"
       - name: MCP 协议自检（mock initialize + tools/list）
         run: |
           printf '%s\n%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | python3 worldsim-mcp/server.py | python3 -c "import json,sys; rs=[json.loads(l) for l in sys.stdin if l.strip()]; assert any(r.get('id')==1 and 'serverInfo' in r.get('result',{}) for r in rs); tl=[r for r in rs if r.get('id')==2][0]['result']['tools']; assert len(tl)>=20; print('MCP: protocol OK, tools:', len(tl))"
