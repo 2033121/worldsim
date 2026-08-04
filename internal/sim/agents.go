@@ -17,9 +17,10 @@ import (
 // ---------- LLM 客户端（包装 internal/llm，带 Mock 调试模式） ----------
 
 type LLMClient struct {
-	Cfg   *config.APIConfig
-	Mock  func(system, user string) string // 非 nil 时走本地模拟（无 API 时调试链路）
-	Tools *llm.ToolRegistry                // 非空且注册了工具时，CompleteTier 走工具调用（function calling）
+	Cfg       *config.APIConfig
+	Mock      func(system, user string) string // 非 nil 时走本地模拟（无 API 时调试链路）
+	Tools     *llm.ToolRegistry                // 非空且注册了工具时，CompleteTier 走工具调用（function calling）
+	WorldRefs string                            // 世界参考资料（用户上传附件聚合），非空时注入到所有系统提示
 }
 
 // Complete 用默认模型调用（normal 档位）
@@ -42,6 +43,10 @@ func (c *LLMClient) CompleteTier(ctx context.Context, tier, system, user string)
 	// 每步 LLM 调用加 150s 硬超时：中转站偶发挂起时快速失败→上层 fallback，不卡死模拟循环
 	callCtx, cancel := context.WithTimeout(ctx, 150*time.Second)
 	defer cancel()
+	// 世界参考资料（用户上传附件）：视为本世界权威设定，追加进系统提示，所有 Agent 必须遵守
+	if strings.TrimSpace(c.WorldRefs) != "" {
+		system += "\n【世界参考资料（用户上传，视为本世界权威设定，剧情/设定必须严格遵循，不得与之矛盾）】\n" + strings.TrimSpace(c.WorldRefs)
+	}
 	// 已注册工具（如联网搜索）时走 function calling 往返；否则保持原同步路径
 	if c.Tools != nil && len(c.Tools.Schemas()) > 0 {
 		cfg := c.Cfg

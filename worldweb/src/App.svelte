@@ -22,6 +22,7 @@
   import EventsPanel from './components/EventsPanel.svelte';
   import ForeshadowsPanel from './components/ForeshadowsPanel.svelte';
   import SnapshotPanel from './components/SnapshotPanel.svelte';
+  import AttachPanel from './components/AttachPanel.svelte';
   import CreateWorldModal from './components/CreateWorldModal.svelte';
   import PauseModal from './components/PauseModal.svelte';
 
@@ -79,6 +80,7 @@
     <!-- 左栏：操作台 + 世界状态 + 全局事件 + 快照 -->
     <aside class="w-72 shrink-0 overflow-y-auto p-5 space-y-5 border-r border-base-content/10 bg-base-100/60">
       <ControlPanel />
+      <AttachPanel />
       <SnapshotPanel />
       <WorldStatePanel />
       <GlobalEventsPanel />

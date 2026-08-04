@@ -12,6 +12,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -22,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"worldsim/internal/attach"
 	"worldsim/internal/config"
 	"worldsim/internal/engine"
 	"worldsim/internal/httpapi"
@@ -119,9 +121,9 @@ func initSearchTools(baseDir string) {
 	fmt.Printf(" [搜索] 已启用 %s @ %s（最大 %d 条/次）\n", prov.Name(), cfg.SearxngURL, cfg.MaxResults)
 }
 
-// newLLMClient 构造带（可选）联网搜索工具的 LLMClient。
-func newLLMClient(cfg *config.APIConfig) *sim.LLMClient {
-	return &sim.LLMClient{Cfg: cfg, Tools: webSearchTools}
+// newLLMClient 构造带（可选）联网搜索工具 + 世界参考资料注入的 LLMClient。
+func newLLMClient(cfg *config.APIConfig, worldRefs string) *sim.LLMClient {
+	return &sim.LLMClient{Cfg: cfg, Tools: webSearchTools, WorldRefs: worldRefs}
 }
 
 func resolveProgDir() string {
@@ -156,6 +158,7 @@ type worldInstance struct {
 	heroName string // 主角名（小说写手必须用模拟主角名）
 	created bool // 是否已初始化世界状态（主角等）
 	lastDay *sim.DayResult // 最近一次模拟结果（手动跑天/后台循环都会更新，供"今日对话/事件"面板）
+	attach  *attach.Store   // 世界参考资料附件存储（worlds/{世界名}/attachments/）
 }
 
 func (w *worldInstance) ready() bool { return w != nil && w.engine != nil }
@@ -185,6 +188,12 @@ func startWorldServer(worldDir string, apiCfg *config.APIConfig) {
 	mux.HandleFunc("POST /api/world/novel/generate", ws.handleNovelGenerate)
 	mux.HandleFunc("GET /api/world/novel", ws.handleNovelList)
 	mux.HandleFunc("GET /api/world/novel/chapter/{num}", ws.handleNovelChapter)
+
+	// 世界参考资料附件：上传 / 列表 / 删除
+	mux.HandleFunc("POST /api/world/attach/upload", ws.handleAttachUpload)
+	mux.HandleFunc("GET /api/world/attach", ws.handleAttachList)
+	mux.HandleFunc("DELETE /api/world/attach/{name}", ws.handleAttachDelete)
+	mux.HandleFunc("GET /api/world/attach/refs", ws.handleAttachRefs)
 
 	// 控制台：主题包列表 / 世界书 / 伏笔 / 后台循环
 	mux.HandleFunc("GET /api/worldbooks/themes", ws.handleThemesList)
@@ -507,6 +516,8 @@ func (ws *worldServer) scanWorlds() {
 func (ws *worldServer) newInstance(name string) *worldInstance {
 	dir := filepath.Join(ws.baseDir, name)
 	w := &worldInstance{name: name, dir: dir, apiCfg: ws.apiCfg}
+	// 世界参考资料附件存储（用户上传的设定/事实补充）
+	w.attach = attach.NewStore(filepath.Join(dir, "attachments"))
 
 	// 加载世界书（worlds/../worldbooks/ 池）
 	wbPath := filepath.Join(ws.baseDir, "..", "worldbooks", name+".md")
@@ -584,8 +595,93 @@ func (ws *worldServer) autoEnableLLM(w *worldInstance) {
 		Model:      ws.apiCfg.Model,
 		APIKey:     ws.apiCfg.APIKey,
 		ModelTiers: ws.apiCfg.ModelTiers,
-	})
+	}, w.attachRefs())
 	w.applyLLM()
+}
+
+// attachRefs 返回当前世界参考资料的聚合文本（注入 LLM 上下文用）。
+func (w *worldInstance) attachRefs() string {
+	if w == nil || w.attach == nil {
+		return ""
+	}
+	return w.attach.Aggregate()
+}
+
+// refreshWorldRefs 上传/删除附件后刷新 LLM 客户端的世界参考资料（同一指针，立即生效）。
+func (ws *worldServer) refreshWorldRefs(w *worldInstance) {
+	if w == nil || w.llm == nil {
+		return
+	}
+	w.llm.WorldRefs = w.attachRefs()
+	fmt.Printf(" [附件] 世界参考资料已刷新（%d 字）\n", len(w.llm.WorldRefs))
+}
+
+// POST /api/world/attach/upload — 上传世界参考资料附件（multipart 字段 file）
+func (ws *worldServer) handleAttachUpload(w http.ResponseWriter, r *http.Request) {
+	inst := ws.inst()
+	if inst == nil || inst.attach == nil {
+		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": "没有可用世界，请先创建"})
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, attach.MaxBytes+1<<20)
+	if err := r.ParseMultipartForm(attach.MaxBytes); err != nil {
+		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": "解析上传表单失败: " + err.Error()})
+		return
+	}
+	file, hdr, err := r.FormFile("file")
+	if err != nil {
+		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": "缺少 file 字段或读取失败"})
+		return
+	}
+	defer file.Close()
+	data, err := io.ReadAll(file)
+	if err != nil {
+		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": "读取文件失败: " + err.Error()})
+		return
+	}
+	att, err := inst.attach.Save(hdr.Filename, data)
+	if err != nil {
+		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	ws.refreshWorldRefs(inst)
+	ws.writeJSON(w, 200, map[string]any{"ok": true, "attachment": att})
+}
+
+// GET /api/world/attach — 附件列表
+func (ws *worldServer) handleAttachList(w http.ResponseWriter, r *http.Request) {
+	inst := ws.inst()
+	if inst == nil || inst.attach == nil {
+		ws.writeJSON(w, 200, map[string]any{"attachments": []attach.Attachment{}})
+		return
+	}
+	ws.writeJSON(w, 200, map[string]any{"attachments": inst.attach.List()})
+}
+
+// DELETE /api/world/attach/{name} — 删除附件
+func (ws *worldServer) handleAttachDelete(w http.ResponseWriter, r *http.Request) {
+	inst := ws.inst()
+	if inst == nil || inst.attach == nil {
+		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": "没有可用世界，请先创建"})
+		return
+	}
+	name := r.PathValue("name")
+	if err := inst.attach.Delete(name); err != nil {
+		ws.writeJSON(w, 404, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	ws.refreshWorldRefs(inst)
+	ws.writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// GET /api/world/attach/refs — 当前注入的世界参考资料（聚合文本预览，供前端展示）
+func (ws *worldServer) handleAttachRefs(w http.ResponseWriter, r *http.Request) {
+	inst := ws.inst()
+	if inst == nil {
+		ws.writeJSON(w, 200, map[string]any{"refs": ""})
+		return
+	}
+	ws.writeJSON(w, 200, map[string]any{"refs": inst.attachRefs()})
 }
 
 func (ws *worldServer) writeJSON(w http.ResponseWriter, code int, v any) {
@@ -912,7 +1008,7 @@ func (ws *worldServer) handleSetLLM(w http.ResponseWriter, r *http.Request) {
 			Model:      req.Model,
 			APIKey:     req.APIKey,
 			ModelTiers: tiers,
-		})
+		}, inst.attachRefs())
 		// 持久化到 api.json（重启后小说/模拟分层不丢）
 		if b, err := json.MarshalIndent(inst.llm.Cfg, "", "  "); err == nil {
 			_ = os.WriteFile(filepath.Join(ws.baseDir, "..", "api.json"), b, 0644)
