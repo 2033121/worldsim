@@ -31,8 +31,8 @@ RUN chmod +x /app/docker-entrypoint.sh /app/worldsim
 RUN mkdir -p /app/wsdata
 VOLUME /app/wsdata
 
-# 双端口：48091 世界模拟 WebUI / 48090 小说服务
-EXPOSE 48091 48090
+# 三端口：48092 统一前端入口 / 48091 世界模拟 WebUI / 48090 小说服务
+EXPOSE 48092 48091 48090
 
 # 时区
 ENV TZ=Asia/Shanghai

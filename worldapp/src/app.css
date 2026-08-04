@@ -1,0 +1,64 @@
+/* worldapp/app.css — 统一前端全局样式 */
+@import 'tailwindcss';
+
+html, body {
+  margin: 0;
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+}
+
+/* 浏览器外壳整体布局：全屏，无浏览器原生 UI */
+#app, .browser-shell {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 内容区滚动容器 */
+.browser-viewport {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* 标签页样式 */
+.tab-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 8px 8px 0 0;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  max-width: 180px;
+  font-size: 13px;
+  border: 1px solid transparent;
+}
+.tab-item:hover { background: var(--fallback-bc, color-mix(in oklab, currentColor 8%, transparent)); }
+.tab-item.active {
+  background: var(--fallback-b1, white);
+  border-color: var(--fallback-bc, color-mix(in oklab, currentColor 15%, transparent));
+  border-bottom-color: transparent;
+  font-weight: 600;
+}
+
+/* 命令面板动画 */
+.palette-enter { animation: palIn .12s ease-out; }
+@keyframes palIn {
+  from { opacity: 0; transform: translateY(-6px) scale(.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* 页面切换过渡 */
+.page-enter { animation: pageIn .18s ease-out; }
+@keyframes pageIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* 滚动条美化 */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: color-mix(in oklab, currentColor 22%, transparent); border-radius: 4px; }
+::-webkit-scrollbar-track { background: transparent; }

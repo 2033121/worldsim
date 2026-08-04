@@ -11,6 +11,7 @@ services:
     container_name: worldsim
     restart: unless-stopped
     ports:
+      - "48092:48092"   # 统一前端入口（浏览器式导航外壳 + API 网关）
       - "48091:48091"   # 世界模拟 WebUI
       - "48090:48090"   # 小说创作服务
     volumes:

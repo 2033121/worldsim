@@ -16,6 +16,8 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -44,11 +46,15 @@ var staticFiles embed.FS
 //go:embed wsweb
 var wsWeb embed.FS
 
+//go:embed uiteg
+var unifiedWeb embed.FS
+
 var version = "dev"
 
 const (
 	storyPort  = ":48090" // 小说化服务（原项目功能）
 	worldPort  = ":48091" // 世界模拟服务（WorldSim 新增）
+	uiPort     = ":48092" // 统一前端入口（浏览器式导航外壳）+ API 网关
 )
 
 func main() {
@@ -95,6 +101,10 @@ func main() {
 	// ---------- 启动世界模拟服务（48091） ----------
 	go startWorldServer(worldDir, apiCfg, researchAgent)
 	fmt.Printf(" [系统] 世界模拟服务已启动: http://localhost%s\n", worldPort)
+
+	// ---------- 启动统一前端入口（48092）：浏览器式导航外壳 + API 网关 ----------
+	go startUnifiedServer(storyPort, worldPort)
+	fmt.Printf(" [系统] 统一前端入口已启动: http://localhost%s\n", uiPort)
 
 	fmt.Printf(" [系统] 程序目录: %s\n", progDir)
 	fmt.Printf(" [系统] 小说项目目录: %s\n", storysDir)
@@ -249,6 +259,88 @@ func startWorldServer(worldDir string, apiCfg *config.APIConfig, ra *research.Ag
 
 	if err := http.ListenAndServe(worldPort, mux); err != nil {
 		log.Fatalf(" [世界模拟] 服务启动失败: %v", err)
+	}
+}
+
+// ---------- 统一前端入口（48092）：serve 统一 SPA + API 网关 ----------
+
+// startUnifiedServer 启动统一前端入口：
+//   - serve 统一 SPA（uiteg/ 构建产物，浏览器式导航外壳）
+//   - API 网关：小说服务走 /api/novel/*（剥离前缀→48090）；世界服务走其真实路径（/api/world*、/api/worlds、
+//     /api/research、/api/system、/api/worldbooks）直连转发→48091。
+//
+// 统一前端只与 :48092 同源通信，无 CORS/跨域；原有 48090/48091 仍可独立访问作为回退。
+func startUnifiedServer(storyPort, worldPort string) {
+	storyURL, _ := url.Parse("http://localhost" + storyPort)
+	worldURL, _ := url.Parse("http://localhost" + worldPort)
+
+	mux := http.NewServeMux()
+
+	// 小说服务：/api/novel/* → 48090（/api/novel/P → /api/P）
+	mux.Handle("/api/novel/", proxyNovel(storyURL))
+	mux.Handle("/api/novel", proxyNovel(storyURL))
+	// 世界服务：真实路径直连转发（不改路径）
+	mux.Handle("/api/world/", forwardProxy(worldURL))
+	mux.Handle("/api/world", forwardProxy(worldURL))
+	mux.Handle("/api/worlds", forwardProxy(worldURL))
+	mux.Handle("/api/research", forwardProxy(worldURL))
+	mux.Handle("/api/system/", forwardProxy(worldURL))
+	mux.Handle("/api/worldbooks/", forwardProxy(worldURL))
+	// 其余 /api/* → 48091（世界模拟，兼容）
+	mux.Handle("/api/", forwardProxy(worldURL))
+
+	// serve 统一 SPA（uiteg/ embed）
+	uiFS, err := fs.Sub(unifiedWeb, "uiteg")
+	if err != nil {
+		log.Fatalf(" [统一前端] 嵌入 uiteg 失败: %v", err)
+	}
+	uiFileServer := http.FileServer(http.FS(uiFS))
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			data, err := unifiedWeb.ReadFile("uiteg/index.html")
+			if err != nil {
+				http.Error(w, "统一前端加载失败", 500)
+				return
+			}
+			w.Write(data)
+			return
+		}
+		uiFileServer.ServeHTTP(w, r)
+	})
+
+	if err := http.ListenAndServe(uiPort, mux); err != nil {
+		log.Fatalf(" [统一前端] 服务启动失败: %v", err)
+	}
+}
+
+// proxyNovel 构造小说服务代理：把 /api/novel/P 映射为 /api/P 转发到 target。
+func proxyNovel(target *url.URL) http.Handler {
+	return &httputil.ReverseProxy{
+		FlushInterval: 200 * time.Millisecond,
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.SetURL(target)
+			p := strings.TrimPrefix(pr.In.URL.Path, "/api/novel")
+			if p == "" {
+				p = "/"
+			}
+			pr.Out.URL.Path = "/api" + p
+			pr.Out.URL.RawPath = ""
+			pr.Out.URL.RawQuery = pr.In.URL.RawQuery
+			pr.Out.Host = pr.In.Host
+		},
+	}
+}
+
+// forwardProxy 构造一个反向代理 handler：把请求原样转发到 target（不改路径），支持 SSE 流式。
+func forwardProxy(target *url.URL) http.Handler {
+	return &httputil.ReverseProxy{
+		FlushInterval: 200 * time.Millisecond,
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.SetURL(target)
+			pr.Out.URL.RawQuery = pr.In.URL.RawQuery
+			pr.Out.Host = pr.In.Host
+		},
 	}
 }
 
