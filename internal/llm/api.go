@@ -23,6 +23,7 @@ type ChatRequest struct {
 	Stream        bool           `json:"stream,omitempty"`
 	StreamOptions *streamOptions `json:"stream_options,omitempty"`
 	MaxTokens     int            `json:"max_tokens,omitempty"`
+	Tools         []Tool         `json:"tools,omitempty"` // 工具调用（function calling）
 }
 
 // llmSem 全局 LLM 并发闸门：所有 HTTP 调用（流式/同步）共用，
@@ -34,13 +35,13 @@ type streamOptions struct {
 }
 
 type tokenUsage struct {
-	PromptTokens          int `json:"prompt_tokens"`
-	CompletionTokens      int `json:"completion_tokens"`
-	TotalTokens           int `json:"total_tokens"`
-	PromptTokensDetails   *struct {
+	PromptTokens        int `json:"prompt_tokens"`
+	CompletionTokens    int `json:"completion_tokens"`
+	TotalTokens         int `json:"total_tokens"`
+	PromptTokensDetails *struct {
 		CachedTokens int `json:"cached_tokens"`
 	} `json:"prompt_tokens_details,omitempty"`
-	PromptCacheHitTokens int `json:"prompt_cache_hit_tokens,omitempty"`
+	PromptCacheHitTokens  int `json:"prompt_cache_hit_tokens,omitempty"`
 	PromptCacheMissTokens int `json:"prompt_cache_miss_tokens,omitempty"`
 }
 
@@ -78,9 +79,11 @@ func CacheStats() string {
 }
 
 type Message struct {
-	Role             string `json:"role"`
-	Content          string `json:"content"`
-	ReasoningContent string `json:"reasoning_content,omitempty"` // 推理模型思考过程（正文为空时兜底）
+	Role             string     `json:"role"`
+	Content          string     `json:"content"`
+	ReasoningContent string     `json:"reasoning_content,omitempty"` // 推理模型思考过程（正文为空时兜底）
+	ToolCallID       string     `json:"tool_call_id,omitempty"`      // 工具结果消息回传时使用
+	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`        // 模型请求的工具调用
 }
 
 type ChatResponse struct {
@@ -93,9 +96,9 @@ type ChatResponse struct {
 
 // CompletionResult is the normalized result of a chat completion call.
 type CompletionResult struct {
-	Content           string
-	ReasoningContent  string // 推理模型的思考过程（若有，正文之外另存，不混入正文）
-	FinishReason      string // e.g. "stop", "length"
+	Content          string
+	ReasoningContent string // 推理模型的思考过程（若有，正文之外另存，不混入正文）
+	FinishReason     string // e.g. "stop", "length"
 }
 
 func hasAPIVersionSegment(u string) bool {
@@ -290,8 +293,37 @@ func CallAPIMessages(ctx context.Context, apiCfg *config.APIConfig, messages []M
 	syncResult, syncErr := CallAPIMessagesSync(ctx, apiCfg, messages)
 	return syncResult.Content, syncErr
 }
+
 // CallAPIMessagesSync 同步 HTTP 调用（仅作流式失败时的回退）。
 func CallAPIMessagesSync(ctx context.Context, apiCfg *config.APIConfig, messages []Message) (res CompletionResult, err error) {
+	chatResp, err := chatOnceSync(ctx, apiCfg, messages, nil)
+	if err != nil {
+		return CompletionResult{}, err
+	}
+	if len(chatResp.Choices) > 0 {
+		content := chatResp.Choices[0].Message.Content
+		reasoning := chatResp.Choices[0].Message.ReasoningContent
+		// 推理模型兜底：正文为空但思考内容存在时，用思考内容回退（避免空手）
+		if strings.TrimSpace(content) == "" && reasoning != "" {
+			content = reasoning
+			reasoning = ""
+		}
+		return CompletionResult{Content: content, ReasoningContent: reasoning, FinishReason: chatResp.Choices[0].FinishReason}, nil
+	}
+	return CompletionResult{}, fmt.Errorf("接口未响应有效 Choices 文本")
+}
+
+// contentOf 取响应首条选择的消息正文（用于 span/token 统计）
+func contentOf(c ChatResponse) string {
+	if len(c.Choices) > 0 {
+		return c.Choices[0].Message.Content
+	}
+	return ""
+}
+
+// chatOnceSync 执行一次非流式 chat 请求，返回完整原始响应（含 tool_calls）。
+// 供 CallAPIMessagesSync 与工具调用循环共用，避免重复的 HTTP/解析/用量统计逻辑。
+func chatOnceSync(ctx context.Context, apiCfg *config.APIConfig, messages []Message, tools []Tool) (chatResp ChatResponse, err error) {
 	llmSem <- struct{}{} // 全局并发闸门（与流式共用）
 	defer func() { <-llmSem }()
 	fullURL := normalizeURL(apiCfg)
@@ -300,24 +332,24 @@ func CallAPIMessagesSync(ctx context.Context, apiCfg *config.APIConfig, messages
 	var lastUsage *tokenUsage
 	defer func() {
 		// 环节级用量记录（span 从 ctx 取，未标注则不统计；失败也计 Failures）
-		RecordSpan(ctx, apiCfg.Model, lastUsage, countMessageRunes(messages), utf8.RuneCountInString(res.Content), err)
+		RecordSpan(ctx, apiCfg.Model, lastUsage, countMessageRunes(messages), utf8.RuneCountInString(contentOf(chatResp)), err)
 	}()
-
 
 	reqBody := ChatRequest{
 		Model:     apiCfg.Model,
 		Messages:  messages,
 		MaxTokens: apiCfg.MaxTokens,
+		Tools:     tools,
 	}
 
 	bts, err := json.Marshal(reqBody)
 	if err != nil {
-		return CompletionResult{}, err
+		return ChatResponse{}, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", fullURL, bytes.NewBuffer(bts))
 	if err != nil {
-		return CompletionResult{}, err
+		return ChatResponse{}, err
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -329,52 +361,41 @@ func CallAPIMessagesSync(ctx context.Context, apiCfg *config.APIConfig, messages
 	client := llmHTTPClient(timeout)
 	resp, err := client.Do(req)
 	if err != nil {
-		return CompletionResult{}, err
+		return ChatResponse{}, err
 	}
 	defer resp.Body.Close()
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return CompletionResult{}, err
+		return ChatResponse{}, err
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return CompletionResult{}, fmt.Errorf("API 响应错误，状态码: %d, 返回内容: %s", resp.StatusCode, string(bodyBytes))
+		return ChatResponse{}, fmt.Errorf("API 响应错误，状态码: %d, 返回内容: %s", resp.StatusCode, string(bodyBytes))
 	}
 
-	var chatResp ChatResponse
 	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		return CompletionResult{}, err
+		return ChatResponse{}, err
 	}
 
-	if len(chatResp.Choices) > 0 {
-		content := chatResp.Choices[0].Message.Content
-		reasoning := chatResp.Choices[0].Message.ReasoningContent
-		// 推理模型兜底：正文为空但思考内容存在时，用思考内容回退（避免空手）
-		if strings.TrimSpace(content) == "" && reasoning != "" {
-			content = reasoning
-			reasoning = ""
+	if chatResp.Usage != nil {
+		lastUsage = chatResp.Usage // 供 defer 环节级记录
+		if tracker != nil {
+			tracker.finishCall(chatResp.Usage.PromptTokens, chatResp.Usage.CompletionTokens, true, messages, contentOf(chatResp))
 		}
-		if chatResp.Usage != nil {
-			lastUsage = chatResp.Usage // 供 defer 环节级记录
-			if tracker != nil {
-				tracker.finishCall(chatResp.Usage.PromptTokens, chatResp.Usage.CompletionTokens, true, messages, content)
-			}
-			// 前缀缓存统计（独立于 tracker：有 usage 就记录）
-			cached := 0
-			if chatResp.Usage.PromptTokensDetails != nil {
-				cached = chatResp.Usage.PromptTokensDetails.CachedTokens
-			}
-			if chatResp.Usage.PromptCacheHitTokens > cached {
-				cached = chatResp.Usage.PromptCacheHitTokens
-			}
-			RecordCacheUsage(cached, chatResp.Usage.PromptTokens-cached)
-		} else if tracker != nil {
-			tracker.finishCall(0, 0, false, messages, content)
+		// 前缀缓存统计（独立于 tracker：有 usage 就记录）
+		cached := 0
+		if chatResp.Usage.PromptTokensDetails != nil {
+			cached = chatResp.Usage.PromptTokensDetails.CachedTokens
 		}
-		return CompletionResult{Content: content, ReasoningContent: reasoning, FinishReason: chatResp.Choices[0].FinishReason}, nil
+		if chatResp.Usage.PromptCacheHitTokens > cached {
+			cached = chatResp.Usage.PromptCacheHitTokens
+		}
+		RecordCacheUsage(cached, chatResp.Usage.PromptTokens-cached)
+	} else if tracker != nil {
+		tracker.finishCall(0, 0, false, messages, contentOf(chatResp))
 	}
-	return CompletionResult{}, fmt.Errorf("接口未响应有效 Choices 文本")
+	return chatResp, nil
 }
 
 func CallAPIWithRetry(ctx context.Context, apiCfg *config.APIConfig, system, user string) string {
@@ -461,9 +482,9 @@ func llmHTTPClient(timeout time.Duration) *http.Client {
 	return &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
-			ForceAttemptHTTP2:  false,
-			DisableKeepAlives:  true,
-			MaxIdleConns:       1,
+			ForceAttemptHTTP2:   false,
+			DisableKeepAlives:   true,
+			MaxIdleConns:        1,
 			MaxIdleConnsPerHost: 1,
 		},
 	}
@@ -562,21 +583,21 @@ func CallAPIStreamMessages(ctx context.Context, apiCfg *config.APIConfig, messag
 	if result == "" {
 		return CompletionResult{}, fmt.Errorf("流式响应为空")
 	}
-		if streamUsage != nil {
-			if tracker != nil {
-				tracker.finishCall(streamUsage.PromptTokens, streamUsage.CompletionTokens, true, messages, result)
-			}
-			// 前缀缓存统计（流式，独立于 tracker）
-			cached := 0
-			if streamUsage.PromptTokensDetails != nil {
-				cached = streamUsage.PromptTokensDetails.CachedTokens
-			}
-			if streamUsage.PromptCacheHitTokens > cached {
-				cached = streamUsage.PromptCacheHitTokens
-			}
-			RecordCacheUsage(cached, streamUsage.PromptTokens-cached)
-		} else if tracker != nil {
-			tracker.finishCall(0, 0, false, messages, result)
+	if streamUsage != nil {
+		if tracker != nil {
+			tracker.finishCall(streamUsage.PromptTokens, streamUsage.CompletionTokens, true, messages, result)
 		}
+		// 前缀缓存统计（流式，独立于 tracker）
+		cached := 0
+		if streamUsage.PromptTokensDetails != nil {
+			cached = streamUsage.PromptTokensDetails.CachedTokens
+		}
+		if streamUsage.PromptCacheHitTokens > cached {
+			cached = streamUsage.PromptCacheHitTokens
+		}
+		RecordCacheUsage(cached, streamUsage.PromptTokens-cached)
+	} else if tracker != nil {
+		tracker.finishCall(0, 0, false, messages, result)
+	}
 	return CompletionResult{Content: result, FinishReason: finishReason}, nil
 }
