@@ -25,9 +25,9 @@ func NewSearXNG(baseURL string, timeout time.Duration) *SearXNG {
 		Client: &http.Client{
 			Timeout: timeout,
 			Transport: &http.Transport{
-				ForceAttemptHTTP2:  false,
-				DisableKeepAlives:  true,
-				MaxIdleConns:       1,
+				ForceAttemptHTTP2:   false,
+				DisableKeepAlives:   true,
+				MaxIdleConns:        1,
 				MaxIdleConnsPerHost: 1,
 			},
 		},

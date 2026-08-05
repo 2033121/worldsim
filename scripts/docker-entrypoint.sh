@@ -4,12 +4,12 @@ set -e
 
 DATA_DIR="/app/wsdata"
 SEED_DIR="/app/seed"
-# 代码用 filepath.Join(baseDir, "..", "worldbooks") → /app/worldbooks（baseDir=/app/wsdata）
-WB_DIR="/app/worldbooks"
+# 代码用 filepath.Join(baseDir=wsdata/worlds, "..", "worldbooks") → /app/wsdata/worldbooks
+WB_DIR="/app/wsdata/worldbooks"
 
 mkdir -p "$DATA_DIR" "$WB_DIR"
 
-# 首次启动：复制世界书池（含 themes/）到 /app/worldbooks（代码期望路径）
+# 首次启动：复制世界书池（含 themes/）到 $WB_DIR（代码期望路径）
 if [ ! -d "$WB_DIR/themes" ]; then
   echo "[entrypoint] 首次启动：复制 worldbooks 模板到 $WB_DIR"
   cp -r "$SEED_DIR/worldbooks/." "$WB_DIR/"
@@ -29,7 +29,7 @@ fi
 # api.json 检查
 if [ ! -f "$DATA_DIR/api.json" ]; then
   echo "[entrypoint] 警告：$DATA_DIR/api.json 不存在，服务启动后无法调用 LLM"
-  echo "[entrypoint] 请在宿主 d:\\codex1\\worldsim\\wsdata\\api.json 填入 LLM 配置后重启容器"
+  echo "[entrypoint] 请在宿主数据目录($DATA_DIR)的 api.json 填入 LLM 配置后重启容器"
 fi
 
 echo "[entrypoint] 启动 WorldSim：$@"

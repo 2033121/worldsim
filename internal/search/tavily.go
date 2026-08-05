@@ -25,7 +25,7 @@ func NewTavily(apiKey string, timeout time.Duration) *Tavily {
 	return &Tavily{
 		APIKey: strings.TrimSpace(apiKey),
 		Client: &http.Client{
-			Timeout: timeout,
+			Timeout:   timeout,
 			Transport: &http.Transport{ForceAttemptHTTP2: true},
 		},
 	}

@@ -25,7 +25,7 @@ import (
 // StartWebServer wires all routes and blocks serving HTTP. staticFiles must
 // be rooted at the built frontend (index.html at its top level).
 // searchProv 为可选的联网搜索后端（nil 则 /api/search 返回未启用）。
-func StartWebServer(apiCfg *config.APIConfig, apiCfgPath string, logger *sse.LogBroadcaster, port, progDir, version string, staticFiles fs.FS, searchProv search.Provider) {
+func StartWebServer(apiCfg *config.APIConfig, apiCfgPath string, logger *sse.LogBroadcaster, bindHost, port, progDir, version string, staticFiles fs.FS, searchProv search.Provider) {
 	h := NewHandlers(apiCfg, apiCfgPath, logger, progDir, version)
 	h.searchProv = searchProv
 
@@ -175,7 +175,7 @@ func StartWebServer(apiCfg *config.APIConfig, apiCfgPath string, logger *sse.Log
 	handler := recoveryMiddleware(corsMiddleware(loggingMiddleware(mux)))
 
 	srv := &http.Server{
-		Addr:         port,
+		Addr:         bindHost + port,
 		Handler:      handler,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 0,

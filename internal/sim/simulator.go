@@ -12,6 +12,7 @@ import (
 
 	"worldsim/internal/engine"
 	"worldsim/internal/llm"
+	"worldsim/internal/logging"
 	"worldsim/internal/worldbook"
 )
 
@@ -22,33 +23,34 @@ import (
 // MVP 阶段：agents 用 dry-run 模板（确定性、零 LLM），验证数据流与状态机；
 // 后续把 Agent 换成 LLMAgent（包装 internal/llm）即可接入真实决策。
 type Simulator struct {
-	engine    *engine.StateEngine
-	worldDir  string
-	day       int
-	mode      string // scene | summary | skip
-	chronicle []ChronicleEntry
-	events    []EventCard
-	plan      *ProtagonistPlan
-	seq       int // command_id 序号
-	heroName  string // 主角实体名（state.Entities 中第一个）
-	llm       *LLMClient // 非 nil 时走 LLM Agent；nil 走 dry-run 模板
-	lastThinking string  // 主角最近一次三问推理（可展示）
-	thinkings map[int]string // 每日主角三问推理（小说化素材）
-	mem       *MemoryStore // 角色记忆库（§4.6：独立记忆流）
-	modeAuto  bool         // 张力引擎：auto 模式（Scene/Summary/Skip 自适应）
-	lowTensionDays int     // 张力 <0.3 连续天数（Skip 判定）
-	quietDays int          // 连续平淡天数（事件驱动：平淡期快进，时间跨度由剧情定）
-	lastDramaDay int       // 上次戏剧性事件发生的 day（用于告诉事件Agent"距上次事件多久"）
-	currentArc  string     // 总导演规划的当前剧情段落（JSON，注入事件Agent约束方向）
-	arcDone     int        // 当前段落已完成的关键节点数（里程碑进度）
-	dynamicAgents []DynamicAgent // 动态创建的"负责人 Agent"（公司新岗位，随剧情招聘）
-	arcBook     []ArcEntry // 段落大纲账本（导演 outline，落盘防遗忘/防情节丢失）
-	currentArcNum int      // 当前 open 段落编号
-	lastConsolidateDay int  // 上次记忆睡眠巩固日（事件驱动下大步长跳跃会跳过"day%30"触发点，改用间隔触发）
-	pending   map[int][]EventCard // 遭遇链种子（未来事件）
-	foreshadows map[string]Foreshadow // 伏笔账本
-	wb        *worldbook.Worldbook // 世界书（分层注入用）
-	decisions *DecisionStore      // 岔口决策队列（AI 代决 + 用户可干预，零阻塞）
+	engine             *engine.StateEngine
+	worldDir           string
+	worldName          string // 世界名（日志归属，从 worldDir 推导）
+	day                int
+	mode               string // scene | summary | skip
+	chronicle          []ChronicleEntry
+	events             []EventCard
+	plan               *ProtagonistPlan
+	seq                int                   // command_id 序号
+	heroName           string                // 主角实体名（state.Entities 中第一个）
+	llm                *LLMClient            // 非 nil 时走 LLM Agent；nil 走 dry-run 模板
+	lastThinking       string                // 主角最近一次三问推理（可展示）
+	thinkings          map[int]string        // 每日主角三问推理（小说化素材）
+	mem                *MemoryStore          // 角色记忆库（§4.6：独立记忆流）
+	modeAuto           bool                  // 张力引擎：auto 模式（Scene/Summary/Skip 自适应）
+	lowTensionDays     int                   // 张力 <0.3 连续天数（Skip 判定）
+	quietDays          int                   // 连续平淡天数（事件驱动：平淡期快进，时间跨度由剧情定）
+	lastDramaDay       int                   // 上次戏剧性事件发生的 day（用于告诉事件Agent"距上次事件多久"）
+	currentArc         string                // 总导演规划的当前剧情段落（JSON，注入事件Agent约束方向）
+	arcDone            int                   // 当前段落已完成的关键节点数（里程碑进度）
+	dynamicAgents      []DynamicAgent        // 动态创建的"负责人 Agent"（公司新岗位，随剧情招聘）
+	arcBook            []ArcEntry            // 段落大纲账本（导演 outline，落盘防遗忘/防情节丢失）
+	currentArcNum      int                   // 当前 open 段落编号
+	lastConsolidateDay int                   // 上次记忆睡眠巩固日（事件驱动下大步长跳跃会跳过"day%30"触发点，改用间隔触发）
+	pending            map[int][]EventCard   // 遭遇链种子（未来事件）
+	foreshadows        map[string]Foreshadow // 伏笔账本
+	wb                 *worldbook.Worldbook  // 世界书（分层注入用）
+	decisions          *DecisionStore        // 岔口决策队列（AI 代决 + 用户可干预，零阻塞）
 }
 
 // EnableLLM 启用 LLM Agent（配置后主角/世界/事件用真实决策）
@@ -93,12 +95,13 @@ func NewSimulator(se *engine.StateEngine, worldDir string) *Simulator {
 		}
 	}
 	s := &Simulator{
-		engine:   se,
-		worldDir: worldDir,
-		day:      se.State().Day,
-		mode:     "scene",
-		heroName: hero,
-		mem:      NewMemoryStore(filepath.Join(worldDir, "agents_memory.json")),
+		engine:    se,
+		worldDir:  worldDir,
+		worldName: filepath.Base(worldDir),
+		day:       se.State().Day,
+		mode:      "scene",
+		heroName:  hero,
+		mem:       NewMemoryStore(filepath.Join(worldDir, "agents_memory.json")),
 		decisions: NewDecisionStore(worldDir),
 	}
 	// 断点续传（§14.1）：从磁盘恢复编年史与每日思考（小说化素材）
@@ -141,12 +144,12 @@ type ArcEntry struct {
 
 // PlansFile 导演层持久化：段落大纲 + 部门负责人 + 伏笔账本 + 时间锚点
 type PlansFile struct {
-	LastDramaDay  int                    `json:"last_drama_day"`
-	ArcBook       []ArcEntry             `json:"arc_book"`
-	DynamicAgents []DynamicAgent         `json:"dynamic_agents"`
-	Foreshadows   map[string]Foreshadow  `json:"foreshadows"`
-	CurrentArcNum int                    `json:"current_arc_num"` // 当前 open 段落编号（0=无）
-	ArcDone       int                    `json:"arc_done"`        // 当前段落已完成里程碑数
+	LastDramaDay  int                   `json:"last_drama_day"`
+	ArcBook       []ArcEntry            `json:"arc_book"`
+	DynamicAgents []DynamicAgent        `json:"dynamic_agents"`
+	Foreshadows   map[string]Foreshadow `json:"foreshadows"`
+	CurrentArcNum int                   `json:"current_arc_num"` // 当前 open 段落编号（0=无）
+	ArcDone       int                   `json:"arc_done"`        // 当前段落已完成里程碑数
 }
 
 // rawJSON 把段落还原成 GM 原始 JSON 格式（供 currentArc 注入事件 Agent）
@@ -343,8 +346,8 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 						Day: s.day, Kind: "STATE", Time: now(),
 						Content:    "导演开新段落【" + arcMeta.ArcName + "】" + arcMeta.Goal,
 						Visibility: "public", Source: "导演",
-					
-						Weight: 0.85, Tags: []string{"导演", "段落"},})
+
+						Weight: 0.85, Tags: []string{"导演", "段落"}})
 					// 动态招聘：段落里的反派/主线 → 注册"负责人线"（公司新岗位）
 					var arcFull struct {
 						Villain string `json:"villain"`
@@ -356,7 +359,7 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 					// 段落大纲落盘（导演 outline：开段日/目标/反派/里程碑/爽点/时长——防牛头不对马嘴）
 					var arcAll struct {
 						Goal, Villain, ForeshadowFocus, Payoff, TimeHint string
-						Milestones                                        []string
+						Milestones                                       []string
 					}
 					_ = json.Unmarshal([]byte(arc), &arcAll)
 					s.currentArcNum++
@@ -370,25 +373,25 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 			}
 		}
 		// 世界渐进揭示：E段深层设定浮出水面
-	//   · day型：日期到点自动浮出（保底）
-	//   · event型：靠下方事件命中线索触发（在事件生成后检查）
-	revealedNow := ""
-	if s.wb != nil {
-		revealedNow = s.wb.CheckDayReveals(s.day)
-	}
-	revealedAll := ""
-	if s.wb != nil {
-		revealedAll = s.wb.RevealedAll()
-	}
-	unrevealed := ""
-	if s.wb != nil {
-		unrevealed = s.wb.UnrevealedHints()
-	}
-	luckHint := "今日无特殊幸运倾向"
-	if rand.Intn(100) < 15 { // 15% 幸运日
-		luckHint = "今日有幸运倾向"
-	}
-	// 事件 Agent 额外上下文：即将爆发的伏笔 + 活跃的负责人线（各部门在行动）
+		//   · day型：日期到点自动浮出（保底）
+		//   · event型：靠下方事件命中线索触发（在事件生成后检查）
+		revealedNow := ""
+		if s.wb != nil {
+			revealedNow = s.wb.CheckDayReveals(s.day)
+		}
+		revealedAll := ""
+		if s.wb != nil {
+			revealedAll = s.wb.RevealedAll()
+		}
+		unrevealed := ""
+		if s.wb != nil {
+			unrevealed = s.wb.UnrevealedHints()
+		}
+		luckHint := "今日无特殊幸运倾向"
+		if rand.Intn(100) < 15 { // 15% 幸运日
+			luckHint = "今日有幸运倾向"
+		}
+		// 事件 Agent 额外上下文：即将爆发的伏笔 + 活跃的负责人线（各部门在行动）
 		extraCtx := ""
 		if ripe := s.RipeForeshadows(); ripe != "" {
 			extraCtx += "即将爆发的伏笔（酝酿成熟，今天该安排回收/爆发了）：" + ripe + "\n"
@@ -396,39 +399,40 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 		if da := s.DynamicAgentsState(); da != "" {
 			extraCtx += "活跃的负责人线（各部门在行动，事件要呼应它们）：\n" + da
 		}
-		if evs, err := EventGenLLM(ctx, s.llm, s.engine.State(), s.wb, s.OpenForeshadows(), formatPendingEvents(s, s.day), revealedAll, unrevealed, luckHint, s.lastDramaDay, s.currentArc, extraCtx); err == nil && len(evs) > 0 {
-		s.events = evs
-	} else {
-		if err != nil {
-			fmt.Printf(" [模拟] Day%d 事件生成失败(%v)，走 dry-run 兜底\n", s.day, err)
-			s.events = s.dryRunEvents()
+		if evs, err := EventGenLLM(ctx, s.llm, s.engine.State(), s.wb, s.OpenForeshadows(), formatPendingEvents(s, s.day), revealedAll, unrevealed, luckHint, s.lastDramaDay, s.currentArc, extraCtx, s.castRoster(), s.formatBackground()); err == nil && len(evs) > 0 {
+			s.events = evs
+		} else {
+			if err != nil {
+				fmt.Printf(" [模拟] Day%d 事件生成失败(%v)，走 dry-run 兜底\n", s.day, err)
+				logging.ErrorW(s.worldName, "event", fmt.Sprintf("Day%d 事件生成失败，走 dry-run 兜底", s.day), map[string]any{"day": s.day, "error": err.Error()})
+				s.events = s.dryRunEvents()
+			}
 		}
-	}
-	// 事件型深层层：事件命中线索 → 真相浮出水面
-	if s.wb != nil && len(s.events) > 0 {
-		var match strings.Builder
-		for _, e := range s.events {
-			match.WriteString(e.Title)
-			match.WriteString(" ")
-			match.WriteString(e.Frame)
-			for _, nc := range e.NewChars {
-			match.WriteString(" ")
-			match.WriteString(nc.Persona)
+		// 事件型深层层：事件命中线索 → 真相浮出水面
+		if s.wb != nil && len(s.events) > 0 {
+			var match strings.Builder
+			for _, e := range s.events {
+				match.WriteString(e.Title)
+				match.WriteString(" ")
+				match.WriteString(e.Frame)
+				for _, nc := range e.NewChars {
+					match.WriteString(" ")
+					match.WriteString(nc.Persona)
+				}
+			}
+			if trig := s.wb.TriggerByEvent(match.String()); trig != "" {
+				revealedNow += trig
+			}
 		}
+		// 新揭示 → 编年史 + 主角记忆（世界变大了）
+		if revealedNow != "" {
+			s.chronicle = append(s.chronicle, ChronicleEntry{
+				Day: s.day, Kind: "STATE", Time: now(),
+				Content:    "世界深处浮出水面：" + revealedNow,
+				Visibility: "restricted", Source: "系统",
+
+				Weight: 0.85, Tags: []string{"世界揭示"}})
 		}
-		if trig := s.wb.TriggerByEvent(match.String()); trig != "" {
-			revealedNow += trig
-		}
-	}
-	// 新揭示 → 编年史 + 主角记忆（世界变大了）
-	if revealedNow != "" {
-		s.chronicle = append(s.chronicle, ChronicleEntry{
-			Day: s.day, Kind: "STATE", Time: now(),
-			Content:    "世界深处浮出水面：" + revealedNow,
-			Visibility: "restricted", Source: "系统",
-		
-			Weight: 0.85, Tags: []string{"世界揭示"},})
-	}
 	}
 	// ---------- 1.1 事件驱动：平淡期处理（铺垫 或 时间跳跃） ----------
 	// 空事件或全是低价值事件 → 平淡期。不展开决策/NPC/世界推进，两层处理：
@@ -443,8 +447,8 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 					Day: s.day, Kind: "FACT", Time: now(),
 					Content:    "生活·" + ev.Title + "：" + ev.Frame,
 					Visibility: "public", Source: "生活",
-					
-					Weight: 0.4, Tags: []string{"生活", ev.Type},})
+
+					Weight: 0.4, Tags: []string{"生活", ev.Type}})
 			}
 		}
 		if s.quietDays == 1 {
@@ -472,26 +476,26 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 						Day: s.day, Kind: "STATE", Time: now(),
 						Content:    "铺垫·" + d.Title + "：" + d.Content,
 						Visibility: "public", Source: "铺垫",
-					
-						Weight: 0.7, Tags: []string{"铺垫"},})
+
+						Weight: 0.7, Tags: []string{"铺垫"}})
 				}
 				s.day += maxDays - 1 // RunDay 开头已 day++，这里再补 maxDays-1
 			} else {
-		// 真平淡：大步长跳跃 + 浓缩过渡段（网文式时间跳跃，带变化/积累/伏笔；跳跃量按世界时间尺度自由决定：都市天~月、修仙月~年~十年）
-		skipText, skipDays := "", 30
-		if s.llm != nil {
-			skipText, skipDays = TimeSkipLLM(ctx, s.llm, s.engine.State(), s.heroName,
-				formatRecentEvents(s.chronicle, 3), s.OpenForeshadows(), s.wb)
-		}
-		if skipText == "" {
-			skipText = fmt.Sprintf("接下来的日子，%s照常活着，但有些东西在暗处一点点变化。", s.heroName)
+				// 真平淡：大步长跳跃 + 浓缩过渡段（网文式时间跳跃，带变化/积累/伏笔；跳跃量按世界时间尺度自由决定：都市天~月、修仙月~年~十年）
+				skipText, skipDays := "", 30
+				if s.llm != nil {
+					skipText, skipDays = TimeSkipLLM(ctx, s.llm, s.engine.State(), s.heroName,
+						formatRecentEvents(s.chronicle, 3), s.OpenForeshadows(), s.wb)
+				}
+				if skipText == "" {
+					skipText = fmt.Sprintf("接下来的日子，%s照常活着，但有些东西在暗处一点点变化。", s.heroName)
 				}
 				s.chronicle = append(s.chronicle, ChronicleEntry{
 					Day: s.day, Kind: "STATE", Time: now(),
 					Content:    "时间过渡：" + skipText,
 					Visibility: "public", Source: "系统",
-				
-					Weight: 0.5, Tags: []string{"时间过渡"},})
+
+					Weight: 0.5, Tags: []string{"时间过渡"}})
 				s.day += skipDays - 1
 			}
 		}
@@ -535,8 +539,8 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 				Day: s.day, Kind: "STATE", Time: now(),
 				Content:    "本段剧情告一段落（里程碑完成，总导演将规划下一段）",
 				Visibility: "public", Source: "导演",
-			
-				Weight: 0.8, Tags: []string{"导演", "里程碑"},})
+
+				Weight: 0.8, Tags: []string{"导演", "里程碑"}})
 		}
 	}
 	// 遭遇链：消费今天到期的种子事件 + 登记伏笔 + 排队后续事件
@@ -561,6 +565,10 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 	for _, ev := range s.events {
 		for _, nc := range ev.NewChars {
 			regChanges = append(regChanges, s.RegisterCharacter(nc)...)
+		}
+		// 出场活跃度追踪：今天在事件里出现的已有角色，刷新 last_active_day（淡出后召回则重新激活）
+		for _, npc := range ev.NPCs {
+			regChanges = append(regChanges, s.touchLastActive(npc)...)
 		}
 	}
 	// 角色档案：主角 + 已注册角色自动生成完整人设卡（灵魂化）——并行生成省时间
@@ -592,6 +600,9 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 				parts := strings.SplitN(c.Path, ".", 3)
 				if len(parts) >= 2 && parts[0] == "entities" && parts[1] != s.heroName {
 					s.mem.AddDay(s.heroName, fmt.Sprintf("Day%d：遇见了新面孔%s", s.day, parts[1]), "event", 0.6, s.day)
+					if c.Path == "entities."+parts[1]+".extra.role" {
+						logging.InfoW(s.worldName, "character", fmt.Sprintf("Day%d 新角色登场: %s (%s)", s.day, parts[1], c.Value), map[string]any{"day": s.day, "name": parts[1], "role": c.Value})
+					}
 				}
 			}
 		}
@@ -671,8 +682,8 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 				Day: s.day, Kind: "FACT", Time: now(),
 				Content:    "主角决策调用失败（降级为模板行动）：" + err.Error(),
 				Visibility: "public",
-			
-				Weight: 0.3, Tags: []string{"降级"},})
+
+				Weight: 0.3, Tags: []string{"降级"}})
 			action = s.protagonistAct(s.events)
 		} else {
 			action = p // p 可能为 nil（维持现状）
@@ -691,8 +702,8 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 				Day: s.day, Kind: "FACT", Time: now(),
 				Content:    fmt.Sprintf("主角行动被规则拒绝：%v", err),
 				Visibility: "public",
-			
-				Weight: 0.3, Tags: []string{"受阻"},})
+
+				Weight: 0.3, Tags: []string{"受阻"}})
 		} else {
 			res.Proposals = append(res.Proposals, *action)
 			// ---------- 4.5 世界影响反馈（P0-3 蝴蝶效应：主角行动 → 世界变化） ----------
@@ -710,8 +721,8 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 								Day: s.day, Kind: "STATE", Time: now(),
 								Content:    "世界涟漪：" + impact,
 								Visibility: "public",
-							
-								Weight: 0.6, Tags: []string{"涟漪"},})
+
+								Weight: 0.6, Tags: []string{"涟漪"}})
 						}
 					}
 				}
@@ -719,13 +730,12 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 		}
 	}
 
-	// ---------- 4.6 岔口决策入队（AI 代决零阻塞：主角行动即 AI 推荐方向；用户可事后改选，写手按最终方向写） ----------
-	aiAction, aiReason := "", ""
+	// ---------- 4.6 岔口决策入队（AI 代决零阻塞：每个岔口独立 AI 代决，用户可事后改选，写手按最终方向写） ----------
+	heroAction := ""
 	if action != nil {
-		aiAction = action.Reason
-		aiReason = "主角三问决策（AI 代决，用户可改选）"
+		heroAction = action.Reason
 	}
-	s.captureDecisions(aiAction, aiReason)
+	s.captureDecisions(ctx, heroAction)
 
 	// ---------- 5. NPC 互动对话（§5.1：含 NPC 的事件触发，Init→Act→React） ----------
 	var dialogue []DialogueTurn
@@ -734,7 +744,14 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 			turns, prop, err := s.RunDialogue(ctx, ev)
 			if err == nil && prop != nil {
 				prop.CommandID = s.nextCmd("npc")
-				prop.ActorID = "npc_" + ev.NPCs[0]
+				// RunDialogue 内部已按 ev.NPCs/FirstActor 解析出实际 NPC；这里兼容 NPCs 为空但 FirstActor 直指 npc_xxx 的场景，避免越界。
+				actor := "npc_熟人"
+				if len(ev.NPCs) > 0 {
+					actor = "npc_" + ev.NPCs[0]
+				} else if strings.HasPrefix(ev.FirstActor, "npc_") {
+					actor = ev.FirstActor
+				}
+				prop.ActorID = actor
 				prop.BaseRevision = s.engine.State().Revision
 				prop.Type = "state_change"
 				if err := s.engine.Submit(ctx, prop); err == nil {
@@ -749,8 +766,8 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 					Visibility:  "public",
 					Source:      "对话",
 					Credibility: 0.6,
-				
-					Weight: 0.6, Tags: []string{"对话", t.Speaker},})
+
+					Weight: 0.6, Tags: []string{"对话", t.Speaker}})
 			}
 			dialogue = append(dialogue, turns...)
 			break // MVP：每天最多一段对话
@@ -785,6 +802,18 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 	relChanges = append(relChanges, s.DecayRelations(s.heroName, 7)...) // 每7天好感衰减
 	relChanges = append(relChanges, s.CheckLifecycle()...)
 	if len(relChanges) > 0 {
+		// 生命周期日志：角色退场/淡出（重点关注）
+		for _, c := range relChanges {
+			if strings.HasPrefix(c.Path, "entities.") && strings.HasSuffix(c.Path, ".status") {
+				nm := strings.SplitN(strings.TrimPrefix(c.Path, "entities."), ".", 2)[0]
+				switch c.Value {
+				case "departed":
+					logging.InfoW(s.worldName, "character", fmt.Sprintf("Day%d 角色退场: %s", s.day, nm), map[string]any{"day": s.day, "name": nm, "status": "departed"})
+				case "dormant":
+					logging.InfoW(s.worldName, "character", fmt.Sprintf("Day%d 角色淡出(背景化): %s", s.day, nm), map[string]any{"day": s.day, "name": nm, "status": "dormant"})
+				}
+			}
+		}
 		lifeProp := engine.Proposal{
 			CommandID: s.nextCmd("life"), ActorID: "world_agent",
 			BaseRevision: s.engine.State().Revision, Type: "state_change",
@@ -795,7 +824,7 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 		}
 	}
 
-// ---------- 记忆膨胀治理：按记忆量驱动 + 批量巩固（一次 LLM 整理多人，省 token） ----------
+	// ---------- 记忆膨胀治理：按记忆量驱动 + 批量巩固（一次 LLM 整理多人，省 token） ----------
 	if s.llm != nil && s.mem != nil {
 		// 攒够 60 条的角色才巩固；一次调用批量整理、按人分发
 		// 平淡期跳过了就不压（省算力），密集期攒得快就多压（防膨胀）
@@ -805,8 +834,8 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 				Day: s.day, Kind: "STATE", Time: now(),
 				Content:    fmt.Sprintf("记忆巩固：%d个角色的细碎记忆已批量浓缩（记忆量驱动，防膨胀）", len(n)),
 				Visibility: "public", Source: "系统",
-			
-				Weight: 0.15, Tags: []string{"系统"},})
+
+				Weight: 0.15, Tags: []string{"系统"}})
 		}
 	}
 
@@ -882,8 +911,8 @@ func (s *Simulator) recordMemories(res *DayResult) {
 				Day: res.Day, Kind: "STATE", Time: now(),
 				Content:    actor + "反思：" + refl,
 				Visibility: "private", Source: "反思",
-			
-				Weight: 0.7, Tags: []string{"反思"},})
+
+				Weight: 0.7, Tags: []string{"反思"}})
 		}
 	}
 }
@@ -1091,8 +1120,8 @@ func (s *Simulator) recordChronicle(obs ObservationPacket, proposals []engine.Pr
 				Day: s.day, Kind: "STATE", Time: now(),
 				Content:    fmt.Sprintf("[%s] %s → %v", c.Path, c.Op, c.Value),
 				Visibility: "public",
-			
-				Weight: 0.25, Tags: []string{"状态"},})
+
+				Weight: 0.25, Tags: []string{"状态"}})
 		}
 	}
 	// FACT：来自事件/感知
@@ -1111,8 +1140,8 @@ func (s *Simulator) recordChronicle(obs ObservationPacket, proposals []engine.Pr
 			Day: s.day, Kind: "FACT", Time: now(),
 			Content:    fmt.Sprintf("【%s】%s：%s", ev.Type, ev.Title, ev.Frame),
 			Visibility: "public",
-		
-			Weight: 0.3+ev.Severity*0.7, Tags: []string{"事件", ev.Type},})
+
+			Weight: 0.3 + ev.Severity*0.7, Tags: []string{"事件", ev.Type}})
 	}
 	res.Chronicle = s.chronicle
 }

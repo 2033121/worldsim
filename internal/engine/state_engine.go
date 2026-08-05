@@ -35,6 +35,7 @@ type WorldLevel struct {
 	Locations       map[string]Location `json:"locations,omitempty"` // 地点系统（P0-2：状态会变）
 	Tension         float64             `json:"tension"`
 	TensionOverride *TensionOverride    `json:"tension_override,omitempty"`
+	Background      map[string]string   `json:"background,omitempty"` // 背景人物池：名字→一句话身份（还不是NPC，可随剧情晋升为配角）
 }
 
 // Location 地点：有状态的场景对象（会随剧情变化）
@@ -582,6 +583,19 @@ func applyWorldLevel(s *WorldState, rest []string, c Change) error {
 		if c.Op == "add" {
 			ev, _ := c.Value.(string)
 			s.WorldLevel.GlobalEvents = append(s.WorldLevel.GlobalEvents, ev)
+		}
+	case "background":
+		// world_level.background.{名}=一句话身份（背景人物池）；del 移除
+		if len(rest) < 2 {
+			return fmt.Errorf("background 路径需至少2段")
+		}
+		if s.WorldLevel.Background == nil {
+			s.WorldLevel.Background = map[string]string{}
+		}
+		if c.Op == "del" {
+			delete(s.WorldLevel.Background, rest[1])
+		} else if v, ok := c.Value.(string); ok {
+			s.WorldLevel.Background[rest[1]] = v
 		}
 	case "locations":
 		// world_level.locations.{名}.{state|note|type}

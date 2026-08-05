@@ -23,9 +23,9 @@ type Attachment struct {
 	Name        string `json:"name"`
 	Size        int64  `json:"size"`
 	Ext         string `json:"ext"`
-	Extractable bool   `json:"extractable"` // 是否成功提取出可直接给 LLM 读的文本
+	Extractable bool   `json:"extractable"`    // 是否成功提取出可直接给 LLM 读的文本
 	Text        string `json:"text,omitempty"` // 提取的文本（上传/详情时返回；列表时不返回全文）
-	Uploaded    string `json:"uploaded"`    // 上传时间
+	Uploaded    string `json:"uploaded"`       // 上传时间
 }
 
 // extractableExts 支持直接提取文本的扩展名（纯 UTF-8 文本，零依赖；.docx 用标准库 zip+xml 解析）。

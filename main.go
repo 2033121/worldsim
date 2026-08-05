@@ -55,10 +55,19 @@ var unifiedWeb embed.FS
 var version = "dev"
 
 const (
-	storyPort  = ":48090" // 小说化服务（原项目功能）
-	worldPort  = ":48091" // 世界模拟服务（WorldSim 新增）
-	uiPort     = ":48092" // 统一前端入口（浏览器式导航外壳）+ API 网关
+	storyPort = ":48090" // 小说化服务（原项目功能）
+	worldPort = ":48091" // 世界模拟服务（WorldSim 新增）
+	uiPort    = ":48092" // 统一前端入口（浏览器式导航外壳）+ API 网关
 )
+
+// listenHost 返回监听地址绑定主机：默认仅本机（127.0.0.1，安全），
+// Docker/公网部署可用环境变量 WORLDSIM_HOST=0.0.0.0 覆盖。
+func listenHost() string {
+	if h := os.Getenv("WORLDSIM_HOST"); h != "" {
+		return h
+	}
+	return "127.0.0.1"
+}
 
 func main() {
 	progDir := resolveProgDir()
@@ -114,8 +123,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("嵌入静态文件失败: %v", err)
 	}
-	go httpapi.StartWebServer(apiCfg, apiCfgPath, logger, storyPort, progDir, version, staticFS, searchProvider)
+	go httpapi.StartWebServer(apiCfg, apiCfgPath, logger, listenHost(), storyPort, progDir, version, staticFS, searchProvider)
 	fmt.Printf(" [系统] 小说创作服务已启动: http://localhost%s\n", storyPort)
+	logging.Info("server", "小说创作服务启动", map[string]any{"addr": listenHost() + storyPort})
 
 	// ---------- 启动世界模拟服务（48091） ----------
 	// 内嵌监测与自愈模块：跟踪运行/错误日志，异常自动诊断并修复
@@ -202,18 +212,18 @@ func resolveProgDir() string {
 
 // worldInstance 单个世界实例（独立数据目录：worlds/{名字}/）
 type worldInstance struct {
-	name    string
-	dir     string
-	engine  *engine.StateEngine
-	sim     *sim.Simulator
-	llm     *sim.LLMClient
-	wb      *worldbook.Worldbook
-	novelW  *novel.Writer
-	apiCfg  *config.APIConfig
-	heroName string // 主角名（小说写手必须用模拟主角名）
-	created bool // 是否已初始化世界状态（主角等）
-	lastDay *sim.DayResult // 最近一次模拟结果（手动跑天/后台循环都会更新，供"今日对话/事件"面板）
-	attach  *attach.Store   // 世界参考资料附件存储（worlds/{世界名}/attachments/）
+	name     string
+	dir      string
+	engine   *engine.StateEngine
+	sim      *sim.Simulator
+	llm      *sim.LLMClient
+	wb       *worldbook.Worldbook
+	novelW   *novel.Writer
+	apiCfg   *config.APIConfig
+	heroName string         // 主角名（小说写手必须用模拟主角名）
+	created  bool           // 是否已初始化世界状态（主角等）
+	lastDay  *sim.DayResult // 最近一次模拟结果（手动跑天/后台循环都会更新，供"今日对话/事件"面板）
+	attach   *attach.Store  // 世界参考资料附件存储（worlds/{世界名}/attachments/）
 }
 
 func (w *worldInstance) ready() bool { return w != nil && w.engine != nil }
@@ -310,7 +320,7 @@ func startWorldServer(worldDir string, apiCfg *config.APIConfig, ra *research.Ag
 		wsFileServer.ServeHTTP(w, r)
 	})
 
-	if err := http.ListenAndServe(worldPort, mux); err != nil {
+	if err := http.ListenAndServe(listenHost()+worldPort, mux); err != nil {
 		log.Fatalf(" [世界模拟] 服务启动失败: %v", err)
 	}
 }
@@ -365,7 +375,7 @@ func startUnifiedServer(storyPort, worldPort string) {
 		uiFileServer.ServeHTTP(w, r)
 	})
 
-	if err := http.ListenAndServe(uiPort, mux); err != nil {
+	if err := http.ListenAndServe(listenHost()+uiPort, mux); err != nil {
 		log.Fatalf(" [统一前端] 服务启动失败: %v", err)
 	}
 }
@@ -402,19 +412,19 @@ func forwardProxy(target *url.URL) http.Handler {
 
 // 多世界：worldServer 持有世界实例池
 type worldServer struct {
-	baseDir string // worlds/
-	worlds  map[string]*worldInstance
-	current string // 当前世界名
-	apiCfg  *config.APIConfig
+	baseDir  string // worlds/
+	worlds   map[string]*worldInstance
+	current  string // 当前世界名
+	apiCfg   *config.APIConfig
 	research *research.Agent // 题材研究智能体（热门题材研究/主题规划/世界书方向产出）
-	novelMu sync.Mutex // 小说生成防重入锁（并发请求会写重复章号）
+	novelMu  sync.Mutex      // 小说生成防重入锁（并发请求会写重复章号）
 
-	loopMu      sync.Mutex    // 后台持续运行控制
-	loopRunning bool          // 循环是否在跑
-	loopCancel  context.CancelFunc
-	loopTarget  int           // 目标 day（世界时间）
-	loopWorld   string        // 循环绑定的世界名
-	loopConsecFail int        // 连续 RunDay 失败次数（自愈监测用）
+	loopMu         sync.Mutex // 后台持续运行控制
+	loopRunning    bool       // 循环是否在跑
+	loopCancel     context.CancelFunc
+	loopTarget     int    // 目标 day（世界时间）
+	loopWorld      string // 循环绑定的世界名
+	loopConsecFail int    // 连续 RunDay 失败次数（自愈监测用）
 
 	heal *selfheal.Manager // 内嵌监测与自愈模块
 }
@@ -516,6 +526,10 @@ func (ws *worldServer) handleLoopSet(w http.ResponseWriter, r *http.Request) {
 	ws.loopWorld = inst.name
 	go func() {
 		defer func() {
+			// 后台 goroutine 无 HTTP 中间件兜底，panic 会崩掉整个进程；这里恢复并复位循环状态
+			if r := recover(); r != nil {
+				logging.ErrorW(inst.name, "loop", "模拟循环 panic（已恢复）", map[string]any{"panic": fmt.Sprint(r), "day": inst.engine.State().Day})
+			}
 			ws.loopMu.Lock()
 			ws.loopRunning = false
 			ws.loopCancel = nil
@@ -905,9 +919,9 @@ func (ws *worldServer) handleAttachRefs(w http.ResponseWriter, r *http.Request) 
 // GET /api/system/status — 系统能力状态（联网搜索是否启用）
 func (ws *worldServer) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
 	ws.writeJSON(w, 200, map[string]any{
-		"search_enabled":    webSearchTools != nil && len(webSearchTools.Schemas()) > 0,
-		"research_enabled":  ws.research != nil,
-		"theme_cards":       ws.themeCardIDs(),
+		"search_enabled":   webSearchTools != nil && len(webSearchTools.Schemas()) > 0,
+		"research_enabled": ws.research != nil,
+		"theme_cards":      ws.themeCardIDs(),
 	})
 }
 
@@ -1408,6 +1422,15 @@ func (ws *worldServer) handleSimDay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 后台循环进行中禁止手动跑天：同一 Simulator 被并发 RunDay 会数据竞争（day 双跳/编年史错乱）
+	ws.loopMu.Lock()
+	loopBusy := ws.loopRunning && ws.loopWorld == inst.name
+	ws.loopMu.Unlock()
+	if loopBusy {
+		ws.writeJSON(w, 409, map[string]any{"ok": false, "error": "后台模拟循环进行中，请先停止再手动跑天"})
+		return
+	}
+
 	var req struct {
 		Days int    `json:"days"` // 默认1，可连跑多天
 		Mode string `json:"mode"` // 张力引擎：auto(自适应) | scene | summary | skip
@@ -1447,12 +1470,12 @@ func (ws *worldServer) handleSimDay(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	ws.writeJSON(w, 200, map[string]any{
-		"ok":        true,
-		"results":   results,
-		"paused":    results[len(results)-1].Paused,
-		"revision":  inst.engine.State().Revision,
-		"day":       inst.engine.State().Day,
-		"cache":     llm.CacheStats(),
+		"ok":       true,
+		"results":  results,
+		"paused":   results[len(results)-1].Paused,
+		"revision": inst.engine.State().Revision,
+		"day":      inst.engine.State().Day,
+		"cache":    llm.CacheStats(),
 	})
 }
 
@@ -1503,11 +1526,11 @@ func (ws *worldServer) handleSetLLM(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Mode        string            `json:"mode"` // mock | real | off
-		BaseURL     string            `json:"base_url"`
-		Model       string            `json:"model"`
-		APIKey      string            `json:"api_key"`
-		ModelTiers  map[string]string `json:"model_tiers"` // 模型分层：fast/normal/premium
+		Mode       string            `json:"mode"` // mock | real | off
+		BaseURL    string            `json:"base_url"`
+		Model      string            `json:"model"`
+		APIKey     string            `json:"api_key"`
+		ModelTiers map[string]string `json:"model_tiers"` // 模型分层：fast/normal/premium
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		ws.writeJSON(w, 400, map[string]string{"error": "请求解析失败: " + err.Error()})
@@ -1625,11 +1648,11 @@ func (ws *worldServer) handleWorldSelect(w http.ResponseWriter, r *http.Request)
 // body: {"name":"...", "worldbook":"世界书名（可选）", "theme":"主题包名（可选：经典修仙/都市异能/克苏鲁异界…）", "desc":"一句话设定（theme 模式下可选，不传则 LLM 按主题包自拟）"}
 func (ws *worldServer) handleWorldCreate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name      string `json:"name"`
-		Worldbook string `json:"worldbook"` // 世界书名（worldbooks/ 池），可选
-		Theme     string `json:"theme"`     // 主题包名（worldbooks/themes/ 池），可选
-		Desc      string `json:"desc"`      // 一句话设定（theme 模式用）
-		ResearchID string `json:"research_id"` // 研究方案 id（研究结果引导建世界），可选
+		Name               string `json:"name"`
+		Worldbook          string `json:"worldbook"`           // 世界书名（worldbooks/ 池），可选
+		Theme              string `json:"theme"`               // 主题包名（worldbooks/themes/ 池），可选
+		Desc               string `json:"desc"`                // 一句话设定（theme 模式用）
+		ResearchID         string `json:"research_id"`         // 研究方案 id（研究结果引导建世界），可选
 		WorldbookDirection string `json:"worldbook_direction"` // 直接传世界书方向 markdown，可选
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Name) == "" {
@@ -1752,7 +1775,7 @@ func (ws *worldServer) handleMemories(w http.ResponseWriter, r *http.Request) {
 	}
 	ms := inst.sim.MemoryStore()
 	type actorMem struct {
-		Actor   string           `json:"actor"`
+		Actor    string            `json:"actor"`
 		Memories []sim.MemoryEntry `json:"memories"`
 	}
 	var out []actorMem

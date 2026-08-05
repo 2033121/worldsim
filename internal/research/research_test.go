@@ -120,7 +120,7 @@ func TestSaveProposalAndList(t *testing.T) {
 func TestProposalRecordJSONRoundTrip(t *testing.T) {
 	rec := ProposalRecord{
 		ID: "rp_1", Input: "i", CreatedAt: "t",
-		Proposal: &Proposal{Candidates: []Candidate{{ID: "c1"}}},
+		Proposal:  &Proposal{Candidates: []Candidate{{ID: "c1"}}},
 		Direction: "dir",
 		ThemeCard: &themes.Theme{ID: "t1", Name: "测试"},
 	}

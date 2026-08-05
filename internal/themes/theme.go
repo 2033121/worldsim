@@ -30,15 +30,15 @@ type Dimensions struct {
 
 // Theme 一张题材知识卡片。
 type Theme struct {
-	ID       string     `json:"id"`
-	Name     string     `json:"name"`
-	Aliases  []string   `json:"aliases"` // 识别用别名（含题材名近义词）
-	Dim      Dimensions `json:"dimensions"`
-	Locations []string  `json:"locations"`   // 常见地点类型
-	TimeScale string    `json:"time_scale"`  // 时间尺度提示（不写死天数）
-	LifeTexture []string `json:"life_texture"` // 生活质感提示（写"该想什么生活细节"，不给具体例子）
-	EventsPool []string `json:"events_pool"` // 该题材典型事件方向（要素池）
-	Taboos    []string `json:"taboos"`     // 串味红线（禁止借用哪些别题材的维度/质感/示例）
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	Aliases     []string   `json:"aliases"` // 识别用别名（含题材名近义词）
+	Dim         Dimensions `json:"dimensions"`
+	Locations   []string   `json:"locations"`    // 常见地点类型
+	TimeScale   string     `json:"time_scale"`   // 时间尺度提示（不写死天数）
+	LifeTexture []string   `json:"life_texture"` // 生活质感提示（写"该想什么生活细节"，不给具体例子）
+	EventsPool  []string   `json:"events_pool"`  // 该题材典型事件方向（要素池）
+	Taboos      []string   `json:"taboos"`       // 串味红线（禁止借用哪些别题材的维度/质感/示例）
 }
 
 // Store 题材卡片仓库。

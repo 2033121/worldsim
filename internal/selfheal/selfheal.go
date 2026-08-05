@@ -48,13 +48,13 @@ type HealFunc func() (string, error)
 
 // LoopState 世界模拟循环的运行时快照（由 main.go handleLoopSet 附近注册读取）。
 type LoopState struct {
-	Running     bool   `json:"running"`
-	World       string `json:"world"`
-	Day         int    `json:"day"`
-	TargetDay   int    `json:"target_day"`
-	LastErr     string `json:"last_err"`
-	ConsecFail  int    `json:"consec_fail"` // 连续 RunDay 失败次数
-	LLMRunning  bool   `json:"llm_running"` // 是否启用了 LLM（false=仅 dry-run）
+	Running    bool   `json:"running"`
+	World      string `json:"world"`
+	Day        int    `json:"day"`
+	TargetDay  int    `json:"target_day"`
+	LastErr    string `json:"last_err"`
+	ConsecFail int    `json:"consec_fail"` // 连续 RunDay 失败次数
+	LLMRunning bool   `json:"llm_running"` // 是否启用了 LLM（false=仅 dry-run）
 }
 
 // New 创建自愈 Manager，并初始化 selfheal 目录与日志文件。

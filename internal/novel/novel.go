@@ -1,6 +1,7 @@
 // Package novel 实现 WorldSim 的小说化联通（设计文档 §8/§9.10）：
-//   编年史（FACT/SAID/STATE）+ 主角内心 → 小说章节 → 全书导出
-//   核心原则：素材全部转化为叙事（对话化/场景化/心理化），限知视角不剧透。
+//
+//	编年史（FACT/SAID/STATE）+ 主角内心 → 小说章节 → 全书导出
+//	核心原则：素材全部转化为叙事（对话化/场景化/心理化），限知视角不剧透。
 package novel
 
 import (
@@ -23,36 +24,36 @@ import (
 // ---------- 章节计划 ----------
 
 type ChapterPlan struct {
-	Num      int      `json:"num"`
-	Title    string   `json:"title"`
-	DayStart int      `json:"day_start"`
-	DayEnd   int      `json:"day_end"`
-	Days     []int    `json:"days"`
-	Status   string   `json:"status"` // pending | done
-	Path     string   `json:"path,omitempty"`
+	Num      int    `json:"num"`
+	Title    string `json:"title"`
+	DayStart int    `json:"day_start"`
+	DayEnd   int    `json:"day_end"`
+	Days     []int  `json:"days"`
+	Status   string `json:"status"` // pending | done
+	Path     string `json:"path,omitempty"`
 }
 
 // Writer 小说化写手（把模拟成果写成可阅读的小说）
 type Writer struct {
 	APICfg     *config.APIConfig
 	BookTitle  string
-	BookDir    string          // storys/{书名}/chapters/
+	BookDir    string // storys/{书名}/chapters/
 	WB         *worldbook.Worldbook
-	DaysPerCh  int             // 每章包含的模拟天数（默认3）
-	ChapterLen string          // 章节字数档位：short(1500) | normal(2500) | long(4000)
-	Material   *MaterialBank   // 描写素材库（真人大神示范，825条）
-	HeroName   string          // 主角名（写手必须用模拟主角名，不得自造）
+	DaysPerCh  int           // 每章包含的模拟天数（默认3）
+	ChapterLen string        // 章节字数档位：short(1500) | normal(2500) | long(4000)
+	Material   *MaterialBank // 描写素材库（真人大神示范，825条）
+	HeroName   string        // 主角名（写手必须用模拟主角名，不得自造）
 	// 跨章记忆（长文一致性：每章独立请求，靠注入"前情提要+伏笔"防遗忘/防断头）
 	PrevSummary string // 前面所有章节的一句话摘要（累积，最近优先）
 	Foreshadows string // 未回收伏笔清单（模拟层伏笔账本，写手可推进/回收）
-	Decisions  string // 本章涉及剧情岔口与已定方向（用户改选优先，否则 AI 代决；写手必须照此方向写）
+	Decisions   string // 本章涉及剧情岔口与已定方向（用户改选优先，否则 AI 代决；写手必须照此方向写）
 }
 
 // NewWriter 创建小说化写手
 func NewWriter(apiCfg *config.APIConfig, bookTitle, bookDir string, wb *worldbook.Worldbook, heroName string) *Writer {
 	os.MkdirAll(filepath.Join(bookDir, "chapters"), 0755)
 	// 素材库：程序目录 material/（可放自定义素材）
-materialDir := filepath.Join(bookDir, "..", "..", "material")
+	materialDir := filepath.Join(bookDir, "..", "..", "material")
 	return &Writer{
 		APICfg:     apiCfg,
 		BookTitle:  bookTitle,
@@ -237,7 +238,7 @@ func (w *Writer) planChaptersLLM(ctx context.Context, chronicle []sim.ChronicleE
 	if err := json.Unmarshal([]byte(jsonStr), &out); err != nil || len(out.Chapters) == 0 {
 		// 容错：偶尔 LLM 输出 {"title":..,"chapters":[...]} 多包一层
 		var alt struct {
-			Title    string `json:"title"`
+			Title    string         `json:"title"`
 			Chapters []chapterBreak `json:"chapters"`
 		}
 		if json.Unmarshal([]byte(jsonStr), &alt) != nil || len(alt.Chapters) == 0 {
@@ -414,14 +415,14 @@ func (w *Writer) pickChapterTitle(chronicle []sim.ChronicleEntry, days []int) st
 
 // NarrativePlan 叙事规划：把编年史素材翻译成"怎么讲"的章节剧本
 type NarrativePlan struct {
-	OpeningHook   string `json:"opening_hook"`    // 开场钩子：用什么场景/悬念开场
-	MiddleDevelop string `json:"middle_develop"`  // 中段展开：哪些事件写足、哪些压缩
-	Climax        string `json:"climax"`           // 本章高潮/爽点：最该写足的那个时刻
-	ClosingHook   string `json:"closing_hook"`    // 收尾钩子：结尾留什么具体悬念
-	POVNote       string `json:"pov_note"`        // 视角决策：主角知道什么/不知道什么
-	PayoffType    string `json:"payoff_type"`     // 本章爽点类型（打脸/收获/装逼/情感/无）
-	Pacing        string `json:"pacing"`          // 节奏：fast(快节奏推进) / slow(蓄力铺垫) / mixed(张弛交替)
-	WordBudget    string `json:"word_budget"`     // 字数策略：哪些段写足哪些段省略
+	OpeningHook   string `json:"opening_hook"`   // 开场钩子：用什么场景/悬念开场
+	MiddleDevelop string `json:"middle_develop"` // 中段展开：哪些事件写足、哪些压缩
+	Climax        string `json:"climax"`         // 本章高潮/爽点：最该写足的那个时刻
+	ClosingHook   string `json:"closing_hook"`   // 收尾钩子：结尾留什么具体悬念
+	POVNote       string `json:"pov_note"`       // 视角决策：主角知道什么/不知道什么
+	PayoffType    string `json:"payoff_type"`    // 本章爽点类型（打脸/收获/装逼/情感/无）
+	Pacing        string `json:"pacing"`         // 节奏：fast(快节奏推进) / slow(蓄力铺垫) / mixed(张弛交替)
+	WordBudget    string `json:"word_budget"`    // 字数策略：哪些段写足哪些段省略
 }
 
 // planChapterNarrative 叙事规划层：拿编年史素材+世界书+前情，让 LLM 规划"这一章怎么讲"
@@ -492,13 +493,15 @@ func (w *Writer) WriteChapter(ctx context.Context, p ChapterPlan, chronicle []si
 	material := w.buildChapterMaterial(p, chronicle, thinkings)
 	// 两段式管线第①段：叙事规划层——先规划"这一章怎么讲"，再让写手按大纲写
 	narrativePlan := w.planChapterNarrative(ctx, p, material)
-	// 小说化用设定：A1世界观 + B4伏笔清单 + C文风（世界书驱动，文风随题材走）
+	// 小说化用设定：A1世界观 + B4伏笔清单 + C文风（世界书静态，利于前缀缓存）
 	worldCtx := ""
 	if w.WB != nil {
 		worldCtx = w.WB.ForNovelist()
-		if w.HeroName != "" {
-			worldCtx += "\n主角：" + w.HeroName + "（" + w.characterIntro(entities) + "）"
-		}
+	}
+	// 动态内容（角色现状随实体状态变化）单独放 user，保证 system 前缀字节级稳定 → 缓存命中
+	dynamicCtx := ""
+	if w.HeroName != "" {
+		dynamicCtx = "主角：" + w.HeroName + "（" + w.characterIntro(entities) + "）"
 	}
 
 	lengthRule := "2200~3200 字"
@@ -584,43 +587,33 @@ func (w *Writer) WriteChapter(ctx context.Context, p ChapterPlan, chronicle []si
    · 没有任何事发生的时段 → **直接跳过**，不要为凑字数写流水账
    · 宁可章节稍短，也不要注水；平淡章写短，高潮章写足` + sim.WritingCraftSkills()
 
-	// 两段式管线：注入叙事规划层产出的大纲（写手按此结构写，不再"翻译"编年史）
-	if narrativePlan != "" {
-		system += narrativePlan
+	// 动态内容全部放进 user 消息（system 保持静态 → DeepSeek 前缀缓存命中，降本）
+	var ub strings.Builder
+	if dynamicCtx != "" {
+		ub.WriteString("【世界设定与角色现状（作为写作依据，沿用其身份与状态）】\n" + dynamicCtx + "\n\n")
 	}
-
-	// 跨章记忆注入：前情提要（防遗忘）+ 未回收伏笔（防断头）
+	if narrativePlan != "" {
+		ub.WriteString(narrativePlan + "\n\n")
+	}
 	if w.PrevSummary != "" {
-		system += `
-
-【前情提要（前面章节已发生的事，保持连贯：别重复写、别写漏、人物关系与状态沿用）】
-` + w.PrevSummary
+		ub.WriteString("\n【前情提要（前面章节已发生的事，保持连贯：别重复写、别写漏、人物关系与状态沿用）】\n" + w.PrevSummary + "\n")
 	}
 	if w.Foreshadows != "" {
-		system += `
-
-【未回收伏笔（前文埋下的钩子，本章自然推进或回收，别忘掉）】
-` + w.Foreshadows
+		ub.WriteString("\n【未回收伏笔（前文埋下的钩子，本章自然推进或回收，别忘掉）】\n" + w.Foreshadows + "\n")
 	}
-	// 岔口决策注入：本章已定方向（用户改选优先，否则 AI 代决）——写手必须照此方向推进
 	if w.Decisions != "" {
-		system += `
-
-【本章剧情方向（已定，写手必须严格执行：主角按"采用方向"行动，不得另起炉灶或跳过）】
-` + w.Decisions
+		ub.WriteString("\n【本章剧情方向（已定，写手必须严格执行：主角按“采用方向”行动，不得另起炉灶或跳过）】\n" + w.Decisions + "\n")
 	}
-
-	// 素材库注入：抽真实网文段落当"形态示范"（学段落长短/对话节奏/动作推进，禁止抄袭）
-if w.Material != nil {
-	if ref := w.Material.PickFor(material, 3, 8); ref != "" {
-		system += "\n\n" + ref
+	if w.Material != nil {
+		if ref := w.Material.PickFor(material, 3, 8); ref != "" {
+			ub.WriteString("\n【段落形态示范（学节奏/对话/动作推进，禁止抄袭）】\n" + ref + "\n")
+		}
 	}
-}
+	ub.WriteString(strings.TrimSpace(material))
+	ub.WriteString("\n\n【最后指令】现在直接写第" + fmt.Sprintf("%d", p.Num) + "章正文。第一行写'第" + fmt.Sprintf("%d", p.Num) + "章·标题'——标题必须是你起的网文章节名（要有悬念/冲突/画面感，2~8个字，禁止用素材条目名如'街坊议论：xx'）。然后写正文，正文结束另起一行写【本章摘要】。")
+	user := ub.String()
 
-	// user 末尾强制指令：直接写正文（思考走模型自带 reasoning 通道，自动另存）
-	material = strings.TrimSpace(material) + "\n\n【最后指令】现在直接写第" + fmt.Sprintf("%d", p.Num) + "章正文。第一行写'第" + fmt.Sprintf("%d", p.Num) + "章·标题'——标题必须是你起的网文章节名（要有悬念/冲突/画面感，2~8个字，禁止用素材条目名如'街坊议论：xx'）。然后写正文，正文结束另起一行写【本章摘要】。"
-
-	res, err := llm.CallAPITierSyncResult(ctx, &cfg, "premium", system, material)
+	res, err := llm.CallAPITierSyncResult(ctx, &cfg, "premium", system, user)
 	if err != nil {
 		return "", fmt.Errorf("章节生成失败: %w", err)
 	}
@@ -711,6 +704,7 @@ func splitSummary(text string) (notes, body, summary string) {
 	body = strings.TrimSpace(text)
 	return "", body, summary
 }
+
 // saveNotes 创作思路存盘（notes.jsonl，AI构思过程，不属于正文）
 func (w *Writer) saveNotes(p ChapterPlan, notes string) {
 	notesPath := filepath.Join(w.BookDir, "notes.jsonl")
@@ -790,10 +784,12 @@ func truncateRunes(s string, n int) string {
 }
 
 // buildChapterMaterial 剪辑层：按戏剧权重把本章编年史剪成"剧本包"（导演剪辑，不是素材堆）
-//   【本章焦点】tags 统计主线（谁在追什么/什么伏笔该收）——写手先知道本章任务
-//   【场景素材】weight≥0.55 或对话/主角内心：按天原样给（本章血肉，完整场景）
-//   【背景素材】0.3≤weight<0.55（时间过渡/状态变化/涟漪）：压缩成"这段时间的变化"（章首时光流转）
-//   【时间流逝】<0.3 或空天：一行带过（不喂进 prompt）
+//
+//	【本章焦点】tags 统计主线（谁在追什么/什么伏笔该收）——写手先知道本章任务
+//	【场景素材】weight≥0.55 或对话/主角内心：按天原样给（本章血肉，完整场景）
+//	【背景素材】0.3≤weight<0.55（时间过渡/状态变化/涟漪）：压缩成"这段时间的变化"（章首时光流转）
+//	【时间流逝】<0.3 或空天：一行带过（不喂进 prompt）
+//
 // token 控制：只喂高权重场景 + 背景压缩，砍掉 79% 的 STATE 水条目
 func (w *Writer) buildChapterMaterial(p ChapterPlan, chronicle []sim.ChronicleEntry, thinkings map[int]string) string {
 	daySet := map[int]bool{}

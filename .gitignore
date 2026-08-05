@@ -5,6 +5,11 @@ api.json
 .env
 credentials*
 
+# ===== 调试探针文件（含密钥，禁止提交）=====
+internal/**/_goprobe*.go
+**/_probe*
+**_probe*
+
 # ===== 运行时数据（个人世界数据，不入库）=====
 worlds/
 storys/

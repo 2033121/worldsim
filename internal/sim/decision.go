@@ -1,6 +1,7 @@
 package sim
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -169,8 +170,10 @@ func FormatDirections(entries []DecisionEntry) string {
 	return strings.TrimSpace(sb.String())
 }
 
-// Simulator 侧：捕获事件岔口入队（事件带 options 时）
-func (s *Simulator) captureDecisions(aiAction, aiReason string) {
+// captureDecisions 捕获事件岔口入队（事件带 options 时）。
+// 每个岔口独立 AI 代决：DecideChoiceLLM 基于主角今日行动 + 事件情境选一个选项（返回选项ID+理由），
+// 不再像以前那样把全局行动文本塞给所有岔口（曾导致所有 ai_choice 显示同一句）。
+func (s *Simulator) captureDecisions(ctx context.Context, heroAction string) {
 	if s.decisions == nil || len(s.events) == 0 {
 		return
 	}
@@ -193,7 +196,12 @@ func (s *Simulator) captureDecisions(aiAction, aiReason string) {
 		if dup {
 			continue
 		}
-		s.decisions.Capture(s.day, ev.Type, ev.Title, ev.Frame, opts, aiAction, aiReason)
+		choice, reason := DecideChoiceLLM(ctx, s.llm, s.heroName, ev, opts, heroAction)
+		aiReason := "AI 代决（基于主角今日行动，用户可改选）"
+		if reason != "" {
+			aiReason += "：" + reason
+		}
+		s.decisions.Capture(s.day, ev.Type, ev.Title, ev.Frame, opts, choice, aiReason)
 	}
 }
 

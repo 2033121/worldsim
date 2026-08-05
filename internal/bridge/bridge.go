@@ -55,15 +55,15 @@ type WorldData struct {
 
 // SeedResult 播种结果摘要（供 HTTP 端点返回）。
 type SeedResult struct {
-	ProjectName       string `json:"project_name"`
-	WorldName         string `json:"world_name"`
-	Language          string `json:"language"`
-	CharacterCount    int    `json:"character_count"`
-	WorldviewCount    int    `json:"worldview_count"`
-	OrganizationCount int    `json:"organization_count"`
-	OutlineChapterCount int `json:"outline_chapter_count"` // 大纲开篇章节数
-	Day               int    `json:"day"`
-	Reused            bool   `json:"reused"` // 是否复用了世界数据（恒为 true）
+	ProjectName         string `json:"project_name"`
+	WorldName           string `json:"world_name"`
+	Language            string `json:"language"`
+	CharacterCount      int    `json:"character_count"`
+	WorldviewCount      int    `json:"worldview_count"`
+	OrganizationCount   int    `json:"organization_count"`
+	OutlineChapterCount int    `json:"outline_chapter_count"` // 大纲开篇章节数
+	Day                 int    `json:"day"`
+	Reused              bool   `json:"reused"` // 是否复用了世界数据（恒为 true）
 }
 
 // ReadWorld 从 progDir 读取指定世界的可播种数据。
@@ -370,8 +370,8 @@ func buildSettings(data *WorldData) *story.ProjectSettings {
 // buildProgress 近期事件 → 开篇章节；世界书 → 故事梗概。
 func buildProgress(data *WorldData, lang string) *story.Progress {
 	p := &story.Progress{
-		Phase:  "outline",
-		Title:  data.WorldName,
+		Phase:    "outline",
+		Title:    data.WorldName,
 		Chapters: []story.ChapterState{},
 	}
 

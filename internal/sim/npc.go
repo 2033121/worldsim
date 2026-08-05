@@ -25,24 +25,16 @@ func (s *Simulator) NPCRespond(ctx context.Context, npcName, npcMemory, scene st
 	if s.llm == nil {
 		return DialogueTurn{Speaker: npcName, Speech: "……（沉默）", Mood: "平静"}, nil
 	}
-	// 注入完整人设档案（性格/习惯/社交/行为/思考方式）——前缀稳定，利于 DeepSeek 缓存
+	// 注入完整人设档案（性格/习惯/社交/行为/思考方式）——动态内容放 user，system 前缀稳定利于缓存
 	profile := s.FormatSheetForPrompt(npcName)
-	// 世界背景从世界书动态注入（杜绝"浮城"这类硬编码世界名污染任意世界）
 	worldCtx := s.worldBriefForDialogue()
-	system := `你是{npc}，活在这个世界里的真人。你必须有灵魂——言行由你的人格档案决定，保持一致性：
-` + profile + `
-世界背景：{world}
-
+	system := `你是这个世界里的一个真实存在的人。你必须有灵魂——言行由你的人格档案决定，保持一致性（人格档案见用户消息）。
 规则：
 1. 输出严格 JSON：{"speech":"你说出口的一句话（口语化，带你的习惯/口头禅，符合身份，不超过50字）","mood":"当前情绪","relation_delta":0.1}
 2. relation_delta 是你对主角好感度的变化（-0.3~0.3）
 3. 你的习惯和性格会自然流露在语言里（小动作、口头禅、思维方式）；话里有话可以，但别直白剧透；不知道的事不要装知道。`
-	system = strings.ReplaceAll(system, "{npc}", npcName)
-	system = strings.ReplaceAll(system, "{world}", worldCtx)
-
-	// 记忆是动态的，放 user 末尾（保证 system 前缀字节级稳定 → 缓存命中）
-	user := fmt.Sprintf("你的记忆：\n%s\n\n当前场景：%s\n你看到主角（{HERO}）来了。请自然地、按你的性格说一句话。", npcMemory, scene)
-	user = strings.ReplaceAll(user, "{HERO}", s.heroName)
+	user := fmt.Sprintf("你是%s。\n人格档案（言行必须符合，保持一致性）：\n%s\n\n世界背景：\n%s\n\n你的记忆：\n%s\n\n当前场景：%s\n你看到主角（%s）来了。请自然地、按你的性格说一句话。",
+		npcName, profile, worldCtx, npcMemory, scene, s.heroName)
 
 	raw, err := s.llm.CompleteTier(ctx, "fast", system, user)
 	if err != nil {
@@ -113,24 +105,17 @@ func HeroRespondLLM(ctx context.Context, c *LLMClient, hero, heroProfile, other,
 // 替代原来的 3 次独立调用 → 每天省 2 次 LLM 调用（大幅提速，质量靠人格卡保持）
 func (s *Simulator) DialogueBatchLLM(ctx context.Context, npcName, npcMemory, heroProfile, scene string) ([]DialogueTurn, error) {
 	ctx = llm.WithSpan(ctx, "NPC批量对话")
-	profile := s.FormatSheetForPrompt(npcName)
-	system := `你是对话导演，负责生成一场真实的街头偶遇对话。角色：
-NPC：{npc}，人格档案（言行必须符合，保持一致性）：
-` + profile + `
-
-主角：{HERO}，性格：{heroProfile}
-
-规则：
+	// system 保持静态（不注入 npc/人设/主角），动态内容全部放 user → 前缀稳定，利于 DeepSeek 缓存
+	system := `你是对话导演，负责生成一场真实的街头偶遇对话。规则：
 1. 输出严格 JSON 数组，恰好 3 段：
-[{"speaker":"{npc}","speech":"NPC开口的话（口语化，带习惯/口头禅，不超过50字）","mood":"情绪"},
-{"speaker":"{HERO}","speech":"主角回应（自然，符合性格，不超过40字）"},
-{"speaker":"{npc}","speech":"NPC收尾（呼应前文，可话里有话，不超过50字）"}]
-2. 言行符合各自人格；NPC 不能全知（不知道的事不装知道，世界秘密不能说）；对话有生活气息、像真人聊天。
+[{"speaker":"NPC名","speech":"NPC开口的话（口语化，带习惯/口头禅，不超过50字）","mood":"情绪"},
+{"speaker":"主角名","speech":"主角回应（自然，符合性格，不超过40字）"},
+{"speaker":"NPC名","speech":"NPC收尾（呼应前文，可话里有话，不超过50字）"}]
+2. 言行符合各自人格（见用户消息里给出的人设）；NPC 不能全知（不知道的事不装知道，世界秘密不能说）；对话有生活气息、像真人聊天。
 3. 根据场景自然切入，别生硬，别喊名字式开场。`
-	system = strings.ReplaceAll(system, "{npc}", npcName)
-	system = strings.ReplaceAll(system, "{HERO}", s.heroName)
-	system = strings.ReplaceAll(system, "{heroProfile}", heroProfile)
-	user := fmt.Sprintf("NPC 记忆：\n%s\n\n当前场景：%s", npcMemory, scene)
+	profile := s.FormatSheetForPrompt(npcName)
+	user := fmt.Sprintf("NPC：%s\n人格档案（言行必须符合，保持一致性）：\n%s\n\n主角：%s，性格：%s\n\nNPC 记忆：\n%s\n\n当前场景：%s\n请按规则生成 3 段对话。",
+		npcName, profile, s.heroName, heroProfile, npcMemory, scene)
 	raw, err := s.llm.CompleteTier(ctx, "fast", system, user)
 	if err != nil {
 		return nil, err

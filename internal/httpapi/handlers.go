@@ -84,6 +84,14 @@ func (h *Handlers) storysDir() string {
 	return filepath.Join(h.progDir, "storys")
 }
 
+// recoverTask 供后台任务 goroutine 兜底：后台 goroutine 无 HTTP 中间件保护，
+// 需在入口 defer 它，panic 时不崩进程、只记日志。
+func (h *Handlers) recoverTask(span string) {
+	if r := recover(); r != nil {
+		h.logger.ErrorKey("log.task_panic", fmt.Sprintf("[%s] panic: %v", span, r))
+	}
+}
+
 // projectDir returns the current project's directory (empty if no project selected).
 func (h *Handlers) projectDir() string {
 	h.projectMu.RLock()
@@ -660,6 +668,7 @@ func (h *Handlers) PostChapterBlockRevise(w http.ResponseWriter, r *http.Request
 	}
 
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("block_revision")
 		ctx := h.taskCtx
@@ -744,6 +753,7 @@ func (h *Handlers) PostOutlineGenerate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 
 		// 自动清除旧的大纲（仅 pending 章节，保留 accepted 的通过正常流程处理）
@@ -837,6 +847,7 @@ func (h *Handlers) PostOutlineRevise(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("outline_revision")
 		ctx := h.taskCtx
@@ -932,6 +943,7 @@ func (h *Handlers) PostChapterGenerate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("chapter_generation")
 		ctx := h.taskCtx
@@ -1066,6 +1078,7 @@ func (h *Handlers) PostForeshadowOutlineCheck(w http.ResponseWriter, r *http.Req
 	}
 
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("foreshadow_outline_check")
 		ctx := h.taskCtx
@@ -1162,6 +1175,7 @@ func (h *Handlers) PostChapterRevise(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("chapter_revision")
 		ctx := h.taskCtx
@@ -1213,6 +1227,7 @@ func (h *Handlers) PostChapterReviseSpecific(w http.ResponseWriter, r *http.Requ
 	}
 
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("chapter_revision")
 		ctx := h.taskCtx
@@ -1262,6 +1277,7 @@ func (h *Handlers) PostChaptersSmoothTransitions(w http.ResponseWriter, r *http.
 	}
 
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("smooth_transitions")
 		ctx := h.taskCtx
@@ -1397,6 +1413,7 @@ func (h *Handlers) PostSettingsReconcile(w http.ResponseWriter, r *http.Request)
 	}
 
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("settings_reconciliation")
 		ctx := h.taskCtx
@@ -1596,6 +1613,7 @@ func (h *Handlers) PostForeshadowsSuggest(w http.ResponseWriter, r *http.Request
 	}
 
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("foreshadow_suggest")
 		ctx := h.taskCtx
@@ -1837,6 +1855,7 @@ func (h *Handlers) PostImportStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("import_pipeline")
 		ctx := h.taskCtx
@@ -1860,6 +1879,7 @@ func (h *Handlers) PostImportResume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("import_pipeline")
 		ctx := h.taskCtx
@@ -1917,6 +1937,7 @@ func (h *Handlers) PostOutlineGenerateContinuation(w http.ResponseWriter, r *htt
 	}
 
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("continuation_outline")
 		ctx := h.taskCtx
@@ -2403,6 +2424,7 @@ func (h *Handlers) PostChapterPolish(w http.ResponseWriter, r *http.Request) {
 	idx := chapterIdx
 
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("chapter_polish")
 		ctx := h.taskCtx
@@ -2511,6 +2533,7 @@ func (h *Handlers) PostPostProcessDiagnose(w http.ResponseWriter, r *http.Reques
 	}
 
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("postprocess_diagnose")
 		ctx := h.taskCtx
@@ -2548,6 +2571,7 @@ func (h *Handlers) PostPostProcessConsistency(w http.ResponseWriter, r *http.Req
 	}
 
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("postprocess_consistency")
 		ctx := h.taskCtx
@@ -2589,6 +2613,7 @@ func (h *Handlers) PostPostProcessRoadmap(w http.ResponseWriter, r *http.Request
 	}
 
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("postprocess_roadmap")
 		ctx := h.taskCtx
@@ -2654,6 +2679,7 @@ func (h *Handlers) PostPostProcessExecute(w http.ResponseWriter, r *http.Request
 	}
 
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("postprocess_execute")
 		ctx := h.taskCtx
@@ -2858,6 +2884,7 @@ func (h *Handlers) PostChatMessage(w http.ResponseWriter, r *http.Request) {
 	h.lastChatMessage = req.Content
 
 	go func() {
+		defer h.recoverTask("task")
 		// defer 确保任何错误路径都会释放任务锁，否则后续所有任务将永久 409
 		defer h.endTask()
 		h.logger.TaskStart("chat_message")
@@ -2905,6 +2932,7 @@ func (h *Handlers) PostChatMessage(w http.ResponseWriter, r *http.Request) {
 				}
 				childCtx := h.taskCtx
 				go func() {
+					defer h.recoverTask(taskName)
 					defer h.endTask()
 					h.logger.TaskStart(taskName)
 					err := fn(childCtx)
@@ -3008,6 +3036,7 @@ func (h *Handlers) PostArcSkeleton(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("arc_skeleton")
 		ctx := h.taskCtx
@@ -3051,6 +3080,7 @@ func (h *Handlers) PostArcOutline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("arc_outline")
 		ctx := h.taskCtx
@@ -3091,6 +3121,7 @@ func (h *Handlers) PostArcAppend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("arc_append")
 		ctx := h.taskCtx

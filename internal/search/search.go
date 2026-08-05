@@ -29,10 +29,10 @@ type Config struct {
 	Enabled        bool   `json:"enabled"`
 	Provider       string `json:"provider"` // searxng | bing（官方API，需key） | binghtml（cn.bing.com 抓取） | tavily（需 key）
 	SearxngURL     string `json:"searxng_url"`
-	BingAPIKey     string `json:"bing_api_key"`     // Bing Web Search API v7 的订阅 key
-	BingBaseURL    string `json:"bing_base_url"`    // 可选，默认微软官方地址
-	BingHTMLURL    string `json:"binghtml_url"`     // 可选，cn.bing.com HTML 抓取地址
-	TavilyAPIKey   string `json:"tavily_api_key"`   // Tavily Search API 的 key
+	BingAPIKey     string `json:"bing_api_key"`   // Bing Web Search API v7 的订阅 key
+	BingBaseURL    string `json:"bing_base_url"`  // 可选，默认微软官方地址
+	BingHTMLURL    string `json:"binghtml_url"`   // 可选，cn.bing.com HTML 抓取地址
+	TavilyAPIKey   string `json:"tavily_api_key"` // Tavily Search API 的 key
 	MaxResults     int    `json:"max_results"`
 	TimeoutSeconds int    `json:"timeout_seconds"`
 }

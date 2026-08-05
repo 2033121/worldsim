@@ -3,6 +3,7 @@ package sim
 import (
 	"fmt"
 	"math"
+	"math/rand"
 	"sort"
 	"strings"
 
@@ -184,7 +185,29 @@ type NewCharacter struct {
 	Identity string `json:"identity"`  // 职业/身份
 	Persona  string `json:"persona"`   // 一句话人设（性格/背景）
 	Location string `json:"location"`  // 首次出场地点
-	RoleHint string `json:"role_hint"` // 剧情定位建议：love_interest(潜在女主)/important_npc/rival/npc
+	RoleHint string `json:"role_hint"` // 剧情定位建议：love_interest(潜在女主)/important_npc(重要配角)/rival(对手)/minor_npc(普通配角)/temporary_npc(临时龙套)
+}
+
+// 角色影响力分级（决定出场频率/记忆深度/是否生成完整人设卡）
+const (
+	roleProtagonist  = "protagonist"
+	roleLoveInterest = "love_interest"
+	roleImportant    = "important_npc" // 重要配角：贯穿主线，出场频繁，完整记忆与人设卡
+	roleRival        = "rival"         // 对手
+	roleMinor        = "minor_npc"     // 普通配角：偶尔出场，随剧情可能淡出，轻记忆
+	roleTemporary    = "temporary_npc" // 临时龙套：出场一两次即退场，无需记忆/人设卡
+)
+
+// isTransient 是否临时龙套（只出场一两次、不生成人设卡、短生命周期）
+func isTransient(role string) bool { return role == roleTemporary }
+
+// isMajorRole 是否值得常驻（重要配角/潜在女主/对手）——决定是否长期维护
+func isMajorRole(role string) bool {
+	switch role {
+	case roleLoveInterest, roleImportant, roleRival:
+		return true
+	}
+	return false
 }
 
 // RegisterCharacter 注册新角色实体（谁登场由世界决定，是否成为女主由互动决定）
@@ -196,6 +219,7 @@ func (s *Simulator) RegisterCharacter(c NewCharacter) []engine.Change {
 	if _, ok := s.engine.State().Entities[c.Name]; ok {
 		return nil
 	}
+	role := firstNonEmpty(c.RoleHint, "minor_npc")
 	var changes []engine.Change
 	// 兜底地点：主角所在地优先（任何世界通用）
 	fallbackLoc := ""
@@ -208,49 +232,81 @@ func (s *Simulator) RegisterCharacter(c NewCharacter) []engine.Change {
 	changes = append(changes,
 		engine.Change{Path: "entities." + c.Name + ".location", Op: "set", Value: firstNonEmpty(c.Location, fallbackLoc)},
 		engine.Change{Path: "entities." + c.Name + ".job", Op: "set", Value: firstNonEmpty(c.Identity, "本地人")},
+		engine.Change{Path: "entities." + c.Name + ".extra.identity", Op: "set", Value: firstNonEmpty(c.Identity, "本地人")},
 		engine.Change{Path: "entities." + c.Name + ".alive", Op: "set", Value: true},
 		engine.Change{Path: "entities." + c.Name + ".status", Op: "set", Value: "active"},
 		engine.Change{Path: "entities." + c.Name + ".health", Op: "set", Value: 90},
 		engine.Change{Path: "entities." + c.Name + ".extra.persona", Op: "set", Value: firstNonEmpty(c.Persona, "一个普通市民")},
 		engine.Change{Path: "entities." + c.Name + ".extra.gender", Op: "set", Value: firstNonEmpty(c.Gender, "未知")},
-		engine.Change{Path: "entities." + c.Name + ".extra.role", Op: "set", Value: firstNonEmpty(c.RoleHint, "npc")},
+		engine.Change{Path: "entities." + c.Name + ".extra.role", Op: "set", Value: role},
 		engine.Change{Path: "entities." + c.Name + ".extra.debut_day", Op: "set", Value: s.day},
+		engine.Change{Path: "entities." + c.Name + ".extra.last_active_day", Op: "set", Value: s.day},
 	)
+	// 临时龙套：短生命周期（出场后 1~3 天自动退场），不生成完整人设卡
+	if role == roleTemporary {
+		changes = append(changes,
+			engine.Change{Path: "entities." + c.Name + ".extra.transient", Op: "set", Value: true},
+			engine.Change{Path: "entities." + c.Name + ".extra.exit_day", Op: "set", Value: s.day + 1 + rand.Intn(2)},
+		)
+	}
 	// 主角认识TA
 	changes = append(changes, engine.Change{Path: "entities." + s.heroName + ".relationship." + c.Name, Op: "set", Value: 0.08})
 	changes = append(changes, engine.Change{Path: "entities." + s.heroName + ".extra.rel_since_" + c.Name, Op: "set", Value: s.day})
+	// 若背景人物晋升为配角：从背景池移除（不再只是"背景里的人"）
+	if s.engine.State().WorldLevel.Background != nil {
+		if _, isBg := s.engine.State().WorldLevel.Background[c.Name]; isBg {
+			changes = append(changes, engine.Change{Path: "world_level.background." + c.Name, Op: "del"})
+		}
+	}
 	return changes
 }
 
 // ---------- 角色生命周期（"只见过几年"：到点离开/远去/死亡） ----------
 
 // CheckLifecycle 检查角色生命周期：活跃期结束 → 触发离开（由世界Agent写理由）
+// 包括两类：
+//
+//	· 临时龙套（mitransient）：出场后自动到期退场（status→departed）
+//	· 普通配角淡出：久未出场（>fadeDays）→ 标记 dormant（"背景化"），不再作为常驻活跃角色，
+//	  但仍在名册中标注"已淡出"，供事件 Agent 偶尔提及/召回（符合"随剧情淡出视野、偶尔提起"）
 func (s *Simulator) CheckLifecycle() []engine.Change {
 	st := s.engine.State()
 	var changes []engine.Change
 	for name, ent := range st.Entities {
-		if name == s.heroName || ent.Status != "active" {
+		if name == s.heroName || ent.Status == "departed" {
 			continue
 		}
-		exitDay, _ := ent.Extra["exit_day"].(float64)
-		if int(exitDay) <= 0 || int(exitDay) != s.day {
-			continue
+		role, _ := ent.Extra["role"].(string)
+		// 1) 临时龙套：到点退场
+		if isTransient(role) {
+			exitDay, _ := ent.Extra["exit_day"].(float64)
+			if int(exitDay) > 0 && int(exitDay) <= s.day {
+				changes = append(changes,
+					engine.Change{Path: "entities." + name + ".status", Op: "set", Value: "departed"},
+					engine.Change{Path: "entities." + name + ".extra.exit_reason", Op: "set", Value: "临时出场后淡出（Day" + fmt.Sprint(s.day) + "）"},
+				)
+				continue
+			}
 		}
-		// 离开方式：默认远去（50%）或决裂/死亡（随机，世界Agent可改写）
-		way := "远去"
-		changes = append(changes,
-			engine.Change{Path: "entities." + name + ".status", Op: "set", Value: "departed"},
-			engine.Change{Path: "entities." + name + ".extra.exit_reason", Op: "set", Value: way + "（Day" + fmt.Sprint(s.day) + "）"},
-		)
-		// 主角记忆沉淀
-		s.mem.AddDay(s.heroName, fmt.Sprintf("%s在Day%d%s，之后再没见过", name, s.day, way), "event", 0.85, s.day)
+		// 2) 普通配角淡出：非临时、非重要角色，久未出场 → 背景化（dormant）
+		if !isMajorRole(role) && !isTransient(role) && ent.Status == "active" {
+			lastDay, _ := ent.Extra["last_active_day"].(float64)
+			if int(lastDay) > 0 && s.day-int(lastDay) >= fadeThresholdDays {
+				changes = append(changes,
+					engine.Change{Path: "entities." + name + ".status", Op: "set", Value: "dormant"},
+					engine.Change{Path: "entities." + name + ".extra.dormant_day", Op: "set", Value: s.day},
+				)
+			}
+		}
 	}
 	return changes
 }
 
-// ---------- 工具 ----------
+// fadeThresholdDays 普通配角淡出阈值：连续这么多天未出场即背景化
+const fadeThresholdDays = 21
 
 // castNames 返回当前世界角色名单（主角 + 活跃NPC），用于生成/维护人设档案
+// 排除：临时龙套（不生成完整人设卡）/已离开/已背景化（dormant 不再常驻维护）
 func (s *Simulator) castNames() []string {
 	var names []string
 	seen := map[string]bool{}
@@ -262,11 +318,95 @@ func (s *Simulator) castNames() []string {
 		if seen[name] {
 			continue
 		}
-		if ent.Status == "active" || ent.Alive {
+		if ent.Status != "active" {
+			continue
+		}
+		if role, _ := ent.Extra["role"].(string); isTransient(role) {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names
+}
+
+// castRoster 生成角色名册（供事件Agent编排出场/淡出）：名字+定位+地点+最近出场+活跃状态
+// 含 active 与 dormant（淡出）角色，dormant 标注以供"偶尔提及/召回"。
+func (s *Simulator) castRoster() string {
+	st := s.engine.State()
+	var lines []string
+	var names []string
+	for name := range st.Entities {
+		if name != s.heroName {
 			names = append(names, name)
 		}
 	}
-	return names
+	sort.Strings(names)
+	roleLabel := map[string]string{
+		roleLoveInterest: "潜在女主", roleImportant: "重要配角", roleRival: "对手",
+		roleMinor: "普通配角", roleTemporary: "临时龙套",
+	}
+	for _, name := range names {
+		ent := st.Entities[name]
+		if ent.Status == "departed" {
+			continue
+		}
+		role, _ := ent.Extra["role"].(string)
+		label := roleLabel[role]
+		if label == "" {
+			label = "配角"
+		}
+		lastDay, _ := ent.Extra["last_active_day"].(float64)
+		statusMark := "活跃"
+		if ent.Status == "dormant" {
+			statusMark = "已淡出(偶尔提及即可)"
+		} else if isTransient(role) {
+			statusMark = "临时(出场1~2次)"
+		}
+		lines = append(lines, fmt.Sprintf("· %s【%s】%s，地点%s，最近出场Day%d（%s）",
+			name, label, statusMark, firstNonEmpty(ent.Location, "?"), int(lastDay), statusMark))
+	}
+	if len(lines) == 0 {
+		return "（暂无已出场配角）"
+	}
+	return strings.Join(lines, "\n")
+}
+
+// formatBackground 生成背景人物池文本（供事件Agent决定是否晋升为配角）
+func (s *Simulator) formatBackground() string {
+	bg := s.engine.State().WorldLevel.Background
+	if len(bg) == 0 {
+		return "（暂无背景人物）"
+	}
+	var names []string
+	for n := range bg {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	var lines []string
+	for _, n := range names {
+		lines = append(lines, fmt.Sprintf("· %s：%s", n, bg[n]))
+	}
+	return "背景人物池（还不是NPC，只在主角生活圈里被远远看到/听说过；当某个背景人物变得重要时，可把它晋升为正式配角/对手/潜在女主）：\n" + strings.Join(lines, "\n")
+}
+
+// touchLastActive 记录某角色今天出场（出现在事件NPC或新角色）
+func (s *Simulator) touchLastActive(name string) []engine.Change {
+	if name == "" || name == s.heroName {
+		return nil
+	}
+	ent, ok := s.engine.State().Entities[name]
+	if !ok {
+		return nil
+	}
+	if last, _ := ent.Extra["last_active_day"].(float64); int(last) == s.day {
+		return nil
+	}
+	// 淡出后被召回：重新激活
+	ret := []engine.Change{engine.Change{Path: "entities." + name + ".extra.last_active_day", Op: "set", Value: s.day}}
+	if ent.Status == "dormant" {
+		ret = append(ret, engine.Change{Path: "entities." + name + ".status", Op: "set", Value: "active"})
+	}
+	return ret
 }
 
 func clamp(v, lo, hi float64) float64 { return math.Max(lo, math.Min(hi, v)) }

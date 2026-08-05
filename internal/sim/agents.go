@@ -20,7 +20,7 @@ type LLMClient struct {
 	Cfg       *config.APIConfig
 	Mock      func(system, user string) string // 非 nil 时走本地模拟（无 API 时调试链路）
 	Tools     *llm.ToolRegistry                // 非空且注册了工具时，CompleteTier 走工具调用（function calling）
-	WorldRefs string                            // 世界参考资料（用户上传附件聚合），非空时注入到所有系统提示
+	WorldRefs string                           // 世界参考资料（用户上传附件聚合），非空时注入到所有系统提示
 }
 
 // Complete 用默认模型调用（normal 档位）
@@ -61,10 +61,10 @@ func (c *LLMClient) CompleteTier(ctx context.Context, tier, system, user string)
 // ---------- 世界 Agent（LLM）：世界推进 + 张力评估 → 状态变更提案 ----------
 
 type worldAdvanceRequest struct {
-	Day      int     `json:"day"`
-	Weather  string  `json:"weather"`
-	Tension  float64 `json:"tension"`
-	Events   []EventCard `json:"events"`
+	Day     int         `json:"day"`
+	Weather string      `json:"weather"`
+	Tension float64     `json:"tension"`
+	Events  []EventCard `json:"events"`
 }
 
 // WorldAdvanceLLM 让世界 Agent 用 LLM 决定本日世界变化（天气/全局事件/张力/势力动向）
@@ -210,9 +210,9 @@ func GMAgentLLM(ctx context.Context, c *LLMClient, st *engine.WorldState, wb *wo
 	}
 	// 校验基本字段
 	var chk struct {
-		ArcName string   `json:"arc_name"`
-		Goal    string   `json:"goal"`
-		Villain string   `json:"villain"`
+		ArcName    string   `json:"arc_name"`
+		Goal       string   `json:"goal"`
+		Villain    string   `json:"villain"`
 		Milestones []string `json:"milestones"`
 	}
 	if err := json.Unmarshal([]byte(jsonStr), &chk); err != nil || strings.TrimSpace(chk.ArcName) == "" {
@@ -270,7 +270,7 @@ func DriftAgentLLM(ctx context.Context, c *LLMClient, st *engine.WorldState, her
 // ---------- 事件 Agent（LLM）：生成遭遇框架 ----------
 
 // EventGenLLM 让事件 Agent 生成当日 1-3 个遭遇框架（不含 NPC 具体言行，§7.5）
-func EventGenLLM(ctx context.Context, c *LLMClient, st *engine.WorldState, wb *worldbook.Worldbook, openForeshadows, pendingEvents, revealedWorld, unrevealedHints, luckHint string, lastDramaDay int, arcPlan, extraCtx string) ([]EventCard, error) {
+func EventGenLLM(ctx context.Context, c *LLMClient, st *engine.WorldState, wb *worldbook.Worldbook, openForeshadows, pendingEvents, revealedWorld, unrevealedHints, luckHint string, lastDramaDay int, arcPlan, extraCtx, castRoster, background string) ([]EventCard, error) {
 	ctx = llm.WithSpan(ctx, "事件生成")
 	hero := st.Entities // 主角摘要
 	heroJSON, _ := json.MarshalIndent(slimEntities(hero), "", "  ")
@@ -284,13 +284,21 @@ func EventGenLLM(ctx context.Context, c *LLMClient, st *engine.WorldState, wb *w
 0. 世界背景与事件类型（严格遵守）：
 ` + worldCtx + `
 1. 输出严格 JSON 数组，格式：
-[{"id":"ev-001-1","type":"daily|conflict|wonder|romance|opportunity|crisis|revelation|luck|disaster|quest|mystery|rival|milestone|windfall|slice","title":"...","location":"本世界地点（从世界背景里取）","severity":0.1,"frame":"遭遇场景描述（不含NPC具体言行）","first_actor":"protagonist|npc_某角色名","npcs":["某角色名"],"new_characters":[{"name":"新角色名","gender":"女","identity":"...","persona":"一句话人设","location":"出场地点","role_hint":"love_interest|important_npc|rival|npc"}],"rel_effect":"感情/关系影响说明","foreshadow":"伏笔名","resolve_foreshadow":"伏笔名","next_events":[{"title":"后续事件标题","frame":"后续事件框架"}],"options":["...","..."]}]
+[{"id":"ev-001-1","type":"daily|conflict|wonder|romance|opportunity|crisis|revelation|luck|disaster|quest|mystery|rival|milestone|windfall|slice","title":"...","location":"本世界地点（从世界背景里取）","severity":0.1,"frame":"遭遇场景描述（不含NPC具体言行）","first_actor":"protagonist|npc_某角色名","npcs":["某角色名"],"new_characters":[{"name":"新角色名","gender":"女","identity":"...","persona":"一句话人设","location":"出场地点","role_hint":"love_interest|important_npc|rival|minor_npc|temporary_npc"}],"rel_effect":"感情/关系影响说明","foreshadow":"伏笔名","resolve_foreshadow":"伏笔名","next_events":[{"title":"后续事件标题","frame":"后续事件框架"}],"options":["...","..."]}]
 2. severity 0~1：日常0.1-0.3、冲突0.4-0.6、奇遇/重大/感情进展0.7-0.9（0.75以上会触发用户抉择）；**slice（生活切片）0.2-0.4**
 3. frame 只写"遭遇框架"（场景/氛围/人物出现），NPC 具体说出口的话由 NPC Agent 实时生成
 4. 生成 1-3 个事件，类型尽量多样；与主角当前处境相关（钱少就少消费场景）；优先选用事件类型池里的设定，避免凭空造新元素。
    **宁精勿滥**：只有今天有"值得展开的事"才生成事件——冲突、奇遇、机会、危机、感情进展、真相线索、伏笔推进、爽点、反派行动，至少占一样。如果今天确实风平浪静、没有任何戏剧价值的事，直接返回空数组 []（系统会自动快进时间，不浪费篇幅）。**严禁为了凑数生成"平淡的一天""无事发生"这类水事件。**
 5. 事件若涉及常驻NPC（世界背景/世界书里的角色），必须在 npcs 数组里列出，并把 first_actor 设为该 NPC（如"npc_角色名"）——这样会触发 NPC 自主对话。
-6. 新角色：如果事件里出现了"有潜力的新面孔"（可能是女主/重要配角/对手），放入 new_characters 数组（首次登场才放，已存在角色不放）；是否成为女主不由你决定，由互动自然演化——你只负责让TA登场。
+6. **新角色（这版要生成"像真人世界一样丰富"的配角，不再是只有女主/反派的"空舞台"）**：
+   · 一个真实的网文世界里配角很多，只是出场频率不同。生成新角色时按"金字塔"分配 role_hint：
+     - love_interest（潜在女主）/ important_npc（重要配角）/ rival（对手）：**极少**，只有真正有长期剧情潜力的才设——这类角色会贯穿主线、频繁出场、有完整人设。
+     - minor_npc（普通配角）：**适量**——邻居/同事/常客/同门/摊主等，在主角生活圈里反复出现、偶尔互动，推动日常与人情（不必每个都发展成主线）。
+     - temporary_npc（临时龙套）：**最多**——只在本场现身的过路客（店员/路人/送货的/门卫/同席食客），出场一两次即退场，**不需要记忆、不需要完整人设**，只为让场景"像真有人在过日子"。
+   · 新角色首次登场才放 new_characters（已存在角色不放）；是否成为女主不由你决定，由互动自然演化——你只负责让TA登场。
+   · **复用已有配角**：今日事件里能用的角色优先从下方"当前角色名册"里挑（尤其重要配角要按剧情复用），别总造新名字；名册里标"已淡出"的配角只可偶尔提及，不要重新拉出来当主角戏。
+   · **背景人物晋升**：下方"背景人物池"里的人，主角通常只在生活里远远见过/听说过。当某个背景人物因剧情变得重要（卷入事件/缘分/成为关键线索），可把它放进 new_characters 晋升为正式配角（role_hint 按新定位填），由系统自动从背景池转正。
+   · 新角色名字要贴合本世界文化（不要用别的世界的名字），性别/身份/人设一句到位。
 7. 感情/关系：当事件涉及已有关系的深化或破裂时（心动/告白/共度危机/误会/背叛/分离），用 rel_effect 说明，并把涉及角色放进 npcs。
 8. 网文节奏：事件要有戏剧性——爽点（打脸/收获/成长/危机解除）、悬念、转折；平淡日也要埋一点"不对劲"的钩子。重要事件可埋伏笔（foreshadow字段，一句话命名）或带后续事件（next_events，1-3天后发生，形成遭遇链）。
 9. 事件类型补充说明：
@@ -323,7 +331,7 @@ func EventGenLLM(ctx context.Context, c *LLMClient, st *engine.WorldState, wb *w
 	if strings.TrimSpace(extraCtx) != "" {
 		arcBlock += "\n" + extraCtx + "\n"
 	}
-	user := fmt.Sprintf("主角当前状态：\n%s\n今天的日期：第 %d 天，天气 %s，张力 %.2f\n距上一个戏剧性事件约 %d 天（若时间跨度大，说明主角经历了较长的平淡期/积累期——今天应该开启一个新阶段的事件：要么是积累后的爆发/突破，要么是伏笔到期，要么是外部势力终于行动）\n%s当前地点状态：\n%s\n未回收伏笔：%s\n遭遇链种子（来自之前事件，优先编排进来）：\n%s\n世界深层（已揭示部分，可让主角接触冰山一角）：\n%s\n世界深处（未揭示，只有线索可碰）：\n%s\n请生成今日遭遇事件。", heroJSON, st.Day, st.Weather, st.WorldLevel.Tension, st.Day-lastDramaDay, arcBlock, formatLocations(st), openForeshadows, pendingEvents, revealedWorld, unrevealedHints)
+	user := fmt.Sprintf("主角当前状态：\n%s\n今天的日期：第 %d 天，天气 %s，张力 %.2f\n距上一个戏剧性事件约 %d 天（若时间跨度大，说明主角经历了较长的平淡期/积累期——今天应该开启一个新阶段的事件：要么是积累后的爆发/突破，要么是伏笔到期，要么是外部势力终于行动）\n%s当前地点状态：\n%s\n当前角色名册（出场/淡出参考，按需复用，别总造新人）：\n%s\n背景人物池（需要时晋升为配角）：\n%s\n未回收伏笔：%s\n遭遇链种子（来自之前事件，优先编排进来）：\n%s\n世界深层（已揭示部分，可让主角接触冰山一角）：\n%s\n世界深处（未揭示，只有线索可碰）：\n%s\n请生成今日遭遇事件。", heroJSON, st.Day, st.Weather, st.WorldLevel.Tension, st.Day-lastDramaDay, arcBlock, formatLocations(st), castRoster, background, openForeshadows, pendingEvents, revealedWorld, unrevealedHints)
 
 	raw, err := c.CompleteTier(ctx, "fast", system, user)
 	if err != nil {
@@ -449,6 +457,89 @@ func GMJudgeLLM(ctx context.Context, c *LLMClient, st *engine.WorldState, p *eng
 	return nil
 }
 
+// ---------- 岔口决策代决（AI 主编：每个岔口独立代决，不再共用同一句行动） ----------
+
+// DecideChoiceLLM 为单个剧情岔口做 AI 代决：在事件选项中选一个方向。
+// 返回：选中选项的 ID（A/B/C…）+ 一句选择理由。
+// 依据：主角今天的行动方向 + 事件情境 + 主角处境，让每个岔口的 AI 代决各不相同且贴合主角。
+func DecideChoiceLLM(ctx context.Context, c *LLMClient, hero string, ev EventCard, opts []DecisionOption, action string) (string, string) {
+	ctx = llm.WithSpan(ctx, "决策代决")
+	if len(opts) == 0 {
+		return "", ""
+	}
+	var sb []string
+	for _, o := range opts {
+		sb = append(sb, o.ID+". "+o.Desc)
+	}
+	optsTxt := strings.Join(sb, "\n")
+	// 无 LLM / 失败：按主角行动与选项的字面重叠兜底（保底第一个）
+	fallback := func() string { return pickChoiceFallback(opts, action) }
+	if c == nil {
+		return fallback(), ""
+	}
+	system := `你是世界模拟器里的主角决策引擎。主角今天遇到一个剧情岔口，你要基于主角的处境与今日行动方向，替他选一个最贴合的选择。
+输出严格 JSON：{"option":"A","reason":"用一句话说明为什么选这个方向（贴合主角性格/处境/已有行动）"}
+规则：
+1. option 必须是给定选项里的字母（A/B/C…），不得自创新字母。
+2. 依据是「主角今日行动方向 + 事件情境 + 主角处境」，选主角最可能走的那条路。`
+	user := fmt.Sprintf("主角：%s\n主角今日行动方向：%s\n本事件情境：%s\n选项：\n%s\n请主角代决，选一个方向。", hero, action, ev.Frame, optsTxt)
+	raw, err := c.CompleteTier(ctx, "fast", system, user)
+	if err != nil {
+		return fallback(), ""
+	}
+	jsonStr := llm.ExtractJSON(raw)
+	if jsonStr == "" {
+		return fallback(), ""
+	}
+	var resp struct {
+		Option string `json:"option"`
+		Reason string `json:"reason"`
+	}
+	if json.Unmarshal([]byte(jsonStr), &resp) != nil {
+		return fallback(), ""
+	}
+	for _, o := range opts {
+		if strings.EqualFold(strings.TrimSpace(resp.Option), o.ID) {
+			return o.ID, strings.TrimSpace(resp.Reason)
+		}
+	}
+	return fallback(), strings.TrimSpace(resp.Reason)
+}
+
+// pickChoiceFallback 无 LLM / 解析失败时的兜底：按主角行动文本与选项描述的字符重叠，选重叠最高者（保底第一个）。
+func pickChoiceFallback(opts []DecisionOption, action string) string {
+	if len(opts) == 0 {
+		return ""
+	}
+	best, bestScore := opts[0].ID, -1
+	for _, o := range opts {
+		if score := overlapScore(action, o.Desc); score > bestScore {
+			bestScore = score
+			best = o.ID
+		}
+	}
+	return best
+}
+
+// overlapScore 统计 b 中出现在 a 里的字符数（中文按字，近似判定两段文本的主题重叠度）
+func overlapScore(a, b string) int {
+	if a == "" || b == "" {
+		return 0
+	}
+	seen := map[rune]int{}
+	for _, r := range []rune(a) {
+		seen[r]++
+	}
+	score := 0
+	for _, r := range []rune(b) {
+		if seen[r] > 0 {
+			seen[r]--
+			score++
+		}
+	}
+	return score
+}
+
 // ---------- 工具 ----------
 
 func formatEvents(events []EventCard) string {
@@ -476,8 +567,8 @@ func NewMockLLM() *LLMClient {
 	return &LLMClient{Mock: func(system, user string) string {
 		switch {
 		case strings.Contains(system, "事件生成器"):
-	// 事件 Agent mock
-	return `[{"id":"mock-ev-1","type":"wonder","title":"反常的异象","location":"常去的地方","severity":0.7,"frame":"天色将暗，一个平日里熟悉的地方透着说不出的反常，隐约有什么在等着。","first_actor":"protagonist","options":["走近看看","绕路离开","叫住旁人问问"]}]`
+			// 事件 Agent mock
+			return `[{"id":"mock-ev-1","type":"wonder","title":"反常的异象","location":"常去的地方","severity":0.7,"frame":"天色将暗，一个平日里熟悉的地方透着说不出的反常，隐约有什么在等着。","first_actor":"protagonist","options":["走近看看","绕路离开","叫住旁人问问"]}]`
 		case strings.Contains(system, "世界引擎"):
 			// 世界 Agent mock
 			return `{"changes":[{"path":"world_level.tension","op":"set","value":0.45},{"path":"world_level.weather","op":"set","value":"雨"},{"path":"world_level.global_events","op":"add","value":"镇上有人议论昨晚的反常动静"}],"reason":"反常事件推高张力"}`
@@ -486,6 +577,9 @@ func NewMockLLM() *LLMClient {
 			return `{"thinking":"我是主角，一个本地讨生活的普通人，好奇心重但怕惹事。眼前的异象很反常，我该不该去看？","action":"犹豫片刻，还是走近几步查看","changes":[{"path":"entities.{HERO}.location","op":"set","value":"异象所在处"},{"path":"entities.{HERO}.extra.curiosity","op":"set","value":2}],"reason":"好奇心压过了谨慎"}`
 		case strings.Contains(system, "GM"):
 			return `{"allowed":true,"result":"合理","note":"主角接近异象，符合规则"}`
+		case strings.Contains(system, "决策代决"):
+			// 岔口代决 mock：选第一个选项
+			return `{"option":"A","reason":"mock 代决：选择第一个方向（贴近主角行动）"}`
 		}
 		return `{"changes":[],"reason":"mock"}`
 	}}

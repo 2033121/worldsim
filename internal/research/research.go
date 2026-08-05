@@ -30,15 +30,15 @@ import (
 
 // Candidate 一个候选题材/主题的对比项。
 type Candidate struct {
-	ID          string `json:"id"`
-	Title       string `json:"title"`        // 题材/主题名（具体有辨识度）
-	Positioning string `json:"positioning"`  // 题材定位（一句话）
+	ID           string `json:"id"`
+	Title        string `json:"title"`         // 题材/主题名（具体有辨识度）
+	Positioning  string `json:"positioning"`   // 题材定位（一句话）
 	SellingPoint string `json:"selling_point"` // 核心卖点
-	Risks       string `json:"risks"`        // 风险
-	Audience    string `json:"audience"`     // 目标读者
-	Fit         string `json:"fit"`          // 与用户想法/附件的适配性
-	Recommend   bool   `json:"recommend"`    // 是否推荐
-	Reason      string `json:"reason"`       // 推荐理由（仅推荐项填）
+	Risks        string `json:"risks"`         // 风险
+	Audience     string `json:"audience"`      // 目标读者
+	Fit          string `json:"fit"`           // 与用户想法/附件的适配性
+	Recommend    bool   `json:"recommend"`     // 是否推荐
+	Reason       string `json:"reason"`        // 推荐理由（仅推荐项填）
 }
 
 // Proposal 题材对比方案（研究第一步产出）。
@@ -59,11 +59,11 @@ func (p *Proposal) Recommended() *Candidate {
 
 // ProposalRecord 一份已保存的研究方案（含时间戳，供历史列表）。
 type ProposalRecord struct {
-	ID        string     `json:"id"`
-	Input     string     `json:"input"`
-	CreatedAt string     `json:"created_at"`
-	Proposal  *Proposal  `json:"proposal"`
-	Direction string     `json:"direction,omitempty"` // 世界书方向（选定候选后生成）
+	ID        string        `json:"id"`
+	Input     string        `json:"input"`
+	CreatedAt string        `json:"created_at"`
+	Proposal  *Proposal     `json:"proposal"`
+	Direction string        `json:"direction,omitempty"` // 世界书方向（选定候选后生成）
 	ThemeCard *themes.Theme `json:"theme_card,omitempty"`
 }
 
@@ -73,7 +73,7 @@ type Agent struct {
 	tools   *llm.ToolRegistry // 联网搜索工具（web_search）；可为 nil（未启用）
 	themes  *themes.Store
 	prompts *prompt.Loader
-	baseDir string            // 研究方案存档目录（wsdata/research）
+	baseDir string                           // 研究方案存档目录（wsdata/research）
 	MockLLM func(system, user string) string // 测试钩子：非 nil 时走本地模拟（无 API 调用）
 }
 
@@ -136,7 +136,7 @@ func (a *Agent) BuildDirection(ctx context.Context, c Candidate, refs string) (s
 	// 若该题材已有卡片，注入维度提示，避免方向跑偏
 	themeCard := ""
 	if a.themes != nil {
-		if t := a.themes.Detect(c.Title+ " " + c.ID); t != nil {
+		if t := a.themes.Detect(c.Title + " " + c.ID); t != nil {
 			themeCard = t.InjectText()
 		}
 	}

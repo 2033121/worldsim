@@ -1,5 +1,17 @@
 <script>
   import { worldState, currentWorld } from '../lib/stores.js';
+
+  // 角色身份：优先 extra.identity，其次 job，最后解析 persona_sheet 里的 identity
+  function charIdentity(e) {
+    if (e?.extra?.identity) return e.extra.identity;
+    if (e?.job) return e.job;
+    if (e?.extra?.persona_sheet) {
+      try {
+        return JSON.parse(e.extra.persona_sheet).identity || '';
+      } catch (_) {}
+    }
+    return '';
+  }
 </script>
 
 <div class="paper rounded-xl p-4">
@@ -29,7 +41,7 @@
         {#each Object.entries($worldState.entities) as [k, e]}
           {#if e.extra?.role === 'protagonist'}
             <div class="flex justify-between border-b border-dashed border-base-content/10 py-1">
-              <span class="text-base-content/50">🧍 主角</span><span class="font-medium">{k} · {e.job || '-'}</span>
+              <span class="text-base-content/50">🧍 主角</span><span class="font-medium">{k} · {charIdentity(e) || '-'}</span>
             </div>
             <div class="flex justify-between border-b border-dashed border-base-content/10 py-1">
               <span class="text-base-content/50">📍 位置</span><span class="font-medium">{e.location || '-'}</span>

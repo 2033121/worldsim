@@ -6,6 +6,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"worldsim/internal/logging"
 )
 
 // ---------- 环节级 Token 追踪（仿 langfuse Trace/Span：按"环节"聚合调用次数与 token） ----------
@@ -28,6 +30,27 @@ func spanFrom(ctx context.Context) string {
 	}
 	v, _ := ctx.Value(spanCtxKey{}).(string)
 	return v
+}
+
+type startCtxKey struct{}
+
+// WithStart 给 context 打上调用起始时间戳，供 RecordSpan 计算耗时（dur_ms）。
+func WithStart(ctx context.Context) context.Context {
+	if ctx == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, startCtxKey{}, time.Now())
+}
+
+func durFrom(ctx context.Context) (time.Duration, bool) {
+	if ctx == nil {
+		return 0, false
+	}
+	v, ok := ctx.Value(startCtxKey{}).(time.Time)
+	if !ok {
+		return 0, false
+	}
+	return time.Since(v), true
 }
 
 // SpanUsage 单个环节的聚合用量
@@ -54,7 +77,8 @@ func newTokenTracker() *TokenTracker {
 }
 
 // RecordSpan 记录一次调用的用量（在底层 HTTP 调用完成/失败处 defer 调用）。
-// 同时把消耗增量计入全局时间窗历史（RecordWindow：成功计 token，失败计 failures）。
+// 同时把消耗增量计入全局时间窗历史（RecordWindow：成功计 token，失败计 failures），
+// 并写入结构化日志系统（logging）：成功为 debug、失败为 error，便于事后排查问题。
 func RecordSpan(ctx context.Context, model string, usage *tokenUsage, promptRunes, completionRunes int, err error) {
 	span := spanFrom(ctx)
 	if span == "" {
@@ -86,6 +110,21 @@ func RecordSpan(ctx context.Context, model string, usage *tokenUsage, promptRune
 		failures = 1
 	}
 	RecordWindow(time.Now(), prompt, completion, cached, 1, failures)
+
+	// 结构化日志：失败/超时记录为 error（重点排查对象），成功记录为 debug（避免刷屏）
+	fields := map[string]any{
+		"span": span, "model": model,
+		"prompt_tokens": prompt, "completion_tokens": completion,
+	}
+	if dur, ok := durFrom(ctx); ok {
+		fields["dur_ms"] = dur.Milliseconds()
+	}
+	if err != nil {
+		fields["error"] = err.Error()
+		logging.Error("llm", "LLM调用失败: "+span, fields)
+	} else {
+		logging.Debug("llm", "LLM调用完成: "+span, fields)
+	}
 
 	spanTracker.mu.Lock()
 	defer spanTracker.mu.Unlock()

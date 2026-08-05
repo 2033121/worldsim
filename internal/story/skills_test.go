@@ -73,8 +73,8 @@ func TestFilterSkillsByLang(t *testing.T) {
 func TestGetEnabledSkillsByCategoryPolish(t *testing.T) {
 	sc := &config.SkillConfig{
 		EnabledSkills: map[string]bool{
-			"kc-flow-008": true,
-			"kc-flow-007": true, // flow 类，不应被 polish 过滤命中
+			"kc-flow-008":  true,
+			"kc-flow-007":  true, // flow 类，不应被 polish 过滤命中
 			"humanizer-zh": true,
 		},
 	}
@@ -101,7 +101,7 @@ func TestGetEnabledSkillsByCategoryPolish(t *testing.T) {
 func TestFormatSkillsContentNonEmpty(t *testing.T) {
 	sc := &config.SkillConfig{
 		EnabledSkills: map[string]bool{
-			"kc-flow-007": true,
+			"kc-flow-007":  true,
 			"kc-skill-016": true, // 朱雀去痕技法
 		},
 	}

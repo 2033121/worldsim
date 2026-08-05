@@ -11,14 +11,16 @@ services:
     container_name: worldsim
     restart: unless-stopped
     ports:
-      - "48092:48092"   # 统一前端入口（浏览器式导航外壳 + API 网关）
-      - "48091:48091"   # 世界模拟 WebUI
-      - "48090:48090"   # 小说创作服务
+      # 默认仅绑定本机 127.0.0.1（安全）；如需对外暴露，去掉 127.0.0.1: 前缀。
+      - "127.0.0.1:48092:48092"   # 统一前端入口（浏览器式导航外壳 + API 网关）
+      - "127.0.0.1:48091:48091"   # 世界模拟 WebUI
+      - "127.0.0.1:48090:48090"   # 小说创作服务
+    environment:
+      - TZ=Asia/Shanghai
+      - WORLDSIM_HOST=0.0.0.0     # 容器内需监听所有接口，供宿主机端口映射访问
     volumes:
       # 数据目录（api.json / worlds / worldbooks / storys 全在这里）
       - ./wsdata:/app/wsdata
-    environment:
-      - TZ=Asia/Shanghai
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:48091/api/worlds"]
       interval: 30s

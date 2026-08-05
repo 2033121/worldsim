@@ -16,18 +16,18 @@ import (
 
 // CharacterSheet 完整人设卡（存 extra.persona_sheet，JSON字符串）
 type CharacterSheet struct {
-	Name      string   `json:"name"`
-	Role      string   `json:"role"` // protagonist | love_interest | important_npc | rival | npc（可演化）
-	Age       string   `json:"age"`
-	Identity  string   `json:"identity"`  // 职业/身份
+	Name        string   `json:"name"`
+	Role        string   `json:"role"` // protagonist | love_interest | important_npc | rival | npc（可演化）
+	Age         string   `json:"age"`
+	Identity    string   `json:"identity"`    // 职业/身份
 	Personality []string `json:"personality"` // 性格特质（3-5个）：谨慎/固执/热心/毒舌…
-	Habits    []string `json:"habits"`    // 习惯/小动作/口头禅（2-3个）
-	Social    []string `json:"social"`    // 社交/人脉/对谁什么态度（2-3条）
-	Behavior  []string `json:"behavior"`  // 行为方式/决策倾向（2-3条）
-	Thinking  []string `json:"thinking"`  // 思考方式/价值观/底层逻辑（2-3条）
-	Motives   []string `json:"motives"`   // 目标：短期+长期（2条）
-	Fears     []string `json:"fears"`     // 软肋/恐惧（1-2条）
-	Secret    string   `json:"secret"`    // 秘密（他自己知道，别人不知道）
+	Habits      []string `json:"habits"`      // 习惯/小动作/口头禅（2-3个）
+	Social      []string `json:"social"`      // 社交/人脉/对谁什么态度（2-3条）
+	Behavior    []string `json:"behavior"`    // 行为方式/决策倾向（2-3条）
+	Thinking    []string `json:"thinking"`    // 思考方式/价值观/底层逻辑（2-3条）
+	Motives     []string `json:"motives"`     // 目标：短期+长期（2条）
+	Fears       []string `json:"fears"`       // 软肋/恐惧（1-2条）
+	Secret      string   `json:"secret"`      // 秘密（他自己知道，别人不知道）
 }
 
 // SheetPrompt 生成可注入 prompt 的角色档案文本（让NPC言行有灵魂且一致）
@@ -115,6 +115,10 @@ func (s *Simulator) BuildCharacterSheet(ctx context.Context, name string) []engi
 	if !ok {
 		return nil
 	}
+	// 临时龙套：不生成完整人设卡（只出场一两次，省 token，一句话人设足够）
+	if role, _ := ent.Extra["role"].(string); isTransient(role) {
+		return nil
+	}
 	// 已有完整档案（性格≥3条=LLM生成过）则跳过；兜底模板允许重试
 	if raw, ok := ent.Extra["persona_sheet"].(string); ok && raw != "" {
 		var old CharacterSheet
@@ -138,14 +142,17 @@ func (s *Simulator) BuildCharacterSheet(ctx context.Context, name string) []engi
 		cs = CharacterSheetLLM(ctx, s.llm, name, identity, hint)
 	}
 	if cs == nil {
-		// LLM失败：用线索兜底生成最小档案
+		// LLM失败：用线索兜底生成最小档案（性格≥3项，保证不被"已有档案"检查误判而每天重试）
 		cs = &CharacterSheet{
 			Name: name, Role: roleOf(ent), Identity: identity,
-			Personality: []string{"话不多但心里有数"}, Habits: []string{"习惯性先观察"},
-			Social:   []string{"认识主角，点头之交"},
-			Behavior: []string{"低调行事"},
-			Thinking: []string{"先观察再行动"}, Motives: []string{"过好自己的日子"},
-			Fears:    []string{"被卷进麻烦"}, Secret: "心里藏着一些没说出口的事",
+			Personality: []string{"话不多但心里有数", "遇事先观察", "重情义但也讲分寸"},
+			Habits:      []string{"习惯性先观察", "说话前会停顿一下"},
+			Social:      []string{"认识主角，点头之交", "与自己生活圈里的人处得来"},
+			Behavior:    []string{"低调行事", "不轻易表态"},
+			Thinking:    []string{"先观察再行动", "相信事出反常必有妖"},
+			Motives:     []string{"过好自己的日子", "守住自己在乎的人和事"},
+			Fears:       []string{"被卷进麻烦", "被人看穿真心"},
+			Secret:      "心里藏着一些没说出口的事",
 		}
 	}
 	b, _ := json.Marshal(cs)

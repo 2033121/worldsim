@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -171,7 +172,7 @@ func FetchModelContextWindow(apiCfg *config.APIConfig) int {
 		req.Header.Set("Authorization", "Bearer "+apiCfg.APIKey)
 	}
 
-	client := llmHTTPClient(10 * time.Second)
+	client := llmHTTPClient(apiCfg, 10*time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0
@@ -324,10 +325,16 @@ func contentOf(c ChatResponse) string {
 // chatOnceSync 执行一次非流式 chat 请求，返回完整原始响应（含 tool_calls）。
 // 供 CallAPIMessagesSync 与工具调用循环共用，避免重复的 HTTP/解析/用量统计逻辑。
 func chatOnceSync(ctx context.Context, apiCfg *config.APIConfig, messages []Message, tools []Tool) (chatResp ChatResponse, err error) {
-	llmSem <- struct{}{} // 全局并发闸门（与流式共用）
+	// 全局并发闸门（与流式共用）：等待槽位时也可被 ctx 取消，避免取消失效
+	select {
+	case llmSem <- struct{}{}:
+	case <-ctx.Done():
+		return ChatResponse{}, ctx.Err()
+	}
 	defer func() { <-llmSem }()
 	fullURL := normalizeURL(apiCfg)
 	tracker := TaskTokensFromContext(ctx)
+	ctx = WithStart(ctx) // 记录调用耗时（供 RecordSpan 写入日志）
 	tracker.beginCall(messages)
 	var lastUsage *tokenUsage
 	defer func() {
@@ -358,7 +365,7 @@ func chatOnceSync(ctx context.Context, apiCfg *config.APIConfig, messages []Mess
 	}
 
 	timeout := time.Duration(apiCfg.HTTPTimeoutSeconds) * time.Second
-	client := llmHTTPClient(timeout)
+	client := llmHTTPClient(apiCfg, timeout)
 	resp, err := client.Do(req)
 	if err != nil {
 		return ChatResponse{}, err
@@ -478,23 +485,37 @@ func CallAPIStream(ctx context.Context, apiCfg *config.APIConfig, system, user s
 // CallAPIStreamMessages 以完整的多轮消息数组调用 API（流式）。
 // llmHTTPClient 构造保守的 HTTP 客户端：强制 HTTP/1.1 + 禁用连接复用，
 // 兼容阿里云 SLB 等对 Go 默认 Transport（HTTP/2 + keep-alive）支持不佳的上游。
-func llmHTTPClient(timeout time.Duration) *http.Client {
+func llmHTTPClient(apiCfg *config.APIConfig, timeout time.Duration) *http.Client {
+	tr := &http.Transport{
+		ForceAttemptHTTP2:   false,
+		DisableKeepAlives:   true,
+		MaxIdleConns:        1,
+		MaxIdleConnsPerHost: 1,
+	}
+	// 可选 HTTP CONNECT 代理：容器内经宿主直连中转站（Docker/WSL2 NAT 会掐断到部分
+	// 阿里云 ALB 的 TLS 握手，宿主直连正常）。仅当 api.json 配置了 proxy_url 时启用。
+	if apiCfg != nil && strings.TrimSpace(apiCfg.ProxyURL) != "" {
+		if u, err := url.Parse(strings.TrimSpace(apiCfg.ProxyURL)); err == nil {
+			tr.Proxy = http.ProxyURL(u)
+		}
+	}
 	return &http.Client{
-		Timeout: timeout,
-		Transport: &http.Transport{
-			ForceAttemptHTTP2:   false,
-			DisableKeepAlives:   true,
-			MaxIdleConns:        1,
-			MaxIdleConnsPerHost: 1,
-		},
+		Timeout:   timeout,
+		Transport: tr,
 	}
 }
 
 func CallAPIStreamMessages(ctx context.Context, apiCfg *config.APIConfig, messages []Message, onChunk func(string)) (res CompletionResult, err error) {
-	llmSem <- struct{}{} // 全局并发闸门：限制同时打到中转站的请求数，防止并行 Agent 调用打爆上游
+	// 全局并发闸门：限制同时打到中转站的请求数；等待槽位时也可被 ctx 取消
+	select {
+	case llmSem <- struct{}{}:
+	case <-ctx.Done():
+		return CompletionResult{}, ctx.Err()
+	}
 	defer func() { <-llmSem }()
 	fullURL := normalizeURL(apiCfg)
 	tracker := TaskTokensFromContext(ctx)
+	ctx = WithStart(ctx) // 记录调用耗时（供 RecordSpan 写入日志）
 	tracker.beginCall(messages)
 	var streamUsage *tokenUsage
 	defer func() {
@@ -526,7 +547,7 @@ func CallAPIStreamMessages(ctx context.Context, apiCfg *config.APIConfig, messag
 	}
 
 	timeout := time.Duration(apiCfg.HTTPTimeoutSeconds) * time.Second
-	client := llmHTTPClient(timeout)
+	client := llmHTTPClient(apiCfg, timeout)
 	resp, err := client.Do(req)
 	if err != nil {
 		return CompletionResult{}, err

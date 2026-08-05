@@ -1,5 +1,17 @@
 <script>
   import { worldState } from '../lib/stores.js';
+
+  // 角色身份：优先 extra.identity，其次 job，最后解析 persona_sheet 里的 identity
+  function charIdentity(e) {
+    if (e?.extra?.identity) return e.extra.identity;
+    if (e?.job) return e.job;
+    if (e?.extra?.persona_sheet) {
+      try {
+        return JSON.parse(e.extra.persona_sheet).identity || '';
+      } catch (_) {}
+    }
+    return '';
+  }
 </script>
 
 <div class="paper rounded-xl p-4">
@@ -12,10 +24,12 @@
   {:else}
     <div class="grid gap-2 sm:grid-cols-2 pr-1">
       {#each Object.entries($worldState.entities) as [k, e]}
+        {@const identity = charIdentity(e)}
         <div class="rounded-xl bg-base-200/50 border border-base-content/10 p-4 hover:border-primary/40 transition-all">
           <div class="font-semibold text-sm">{k}</div>
           <div class="text-xs text-base-content/50 mt-1 leading-relaxed">
-            {e.job || ''} · {e.location || ''}
+            {#if identity}<span class="font-semibold text-primary">{identity}</span>{/if}
+            {e.location || ''}
             <div class="mt-1 flex flex-wrap gap-1">
               {#if e.assets && Object.keys(e.assets).length}
                 {#each Object.entries(e.assets) as [aname, aval]}

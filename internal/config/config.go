@@ -16,6 +16,7 @@ type APIConfig struct {
 	MaxTokens           int               `json:"max_tokens,omitempty"` // 0 = 模型默认；Agent 调用建议 ≥ 8192
 	HTTPTimeoutSeconds  int               `json:"http_timeout_seconds"`
 	ContextBudgetTokens int               `json:"context_budget_tokens"` // 全书优化上下文预算，默认 900000
+	ProxyURL            string            `json:"proxy_url,omitempty"`   // 可选：HTTP CONNECT 代理。容器内经宿主直连中转站时填 http://host.docker.internal:<port>；空=直连
 	ModelTiers          map[string]string `json:"model_tiers,omitempty"` // 模型分层：fast/normal/premium → 模型名（缺省用 Model）
 }
 
