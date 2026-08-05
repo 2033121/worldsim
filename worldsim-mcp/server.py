@@ -17,6 +17,9 @@ import sys
 import urllib.request
 
 BASE = "http://127.0.0.1:48091"
+# 小说服务（48090）：承载 /api/world/seed-novel、/api/search、/api/llm/stats 等。
+# process 由 worldsim 单进程同时监听 48090/48091/48092，故默认同机可直达 48090。
+NOVEL_BASE = "http://127.0.0.1:48090"
 PROTOCOL_VERSION = "2024-11-05"
 
 # ---------------- 工具定义 ----------------
@@ -54,6 +57,7 @@ TOOLS = [
     {"name": "world_tokens", "description": "LLM 调用统计（调用次数/缓存命中/tokens）", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "world_novel_list", "description": "小说章节列表", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "world_novel_generate", "description": "生成/续写小说章节（1-3分钟/章，可能超时则后台进行）", "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "world_seed_novel", "description": "把当前激活世界直接播种成小说项目（零 LLM 调用）：世界书/角色/势力/近期事件 → 小说大纲与设定。播种后到小说服务 48090 可查看/续写", "inputSchema": {"type": "object", "properties": {"project_name": {"type": "string", "description": "新小说项目名"}, "language": {"type": "string", "description": "小说语言 zh|en（默认 zh）"}}, "required": ["project_name"]}},
     {"name": "world_novel_chapter", "description": "读取某一章正文", "inputSchema": {"type": "object", "properties": {"num": {"type": "number", "description": "章节号"}}, "required": ["num"]}},
     {"name": "world_themes", "description": "列出全部主题包", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "world_snapshots", "description": "时间回退锚点列表（快照：Day/说明/时间）", "inputSchema": {"type": "object", "properties": {}}},
@@ -63,8 +67,8 @@ TOOLS = [
 ]
 
 # ---------------- HTTP 桥接 ----------------
-def api(method, path, body=None):
-    req = urllib.request.Request(BASE + path, method=method)
+def api(method, path, body=None, base=BASE):
+    req = urllib.request.Request(base + path, method=method)
     req.add_header("Content-Type", "application/json")
     data = json.dumps(body).encode() if body is not None else None
     try:
@@ -158,6 +162,18 @@ def call_tool(name, args):
     if name == "world_novel_generate":
         r = api("POST", "/api/world/novel/generate", {})
         return json.dumps({**r, "hint": "写作约1-3分钟/章；若超时则后台进行，稍后 world_novel_list 查看"}, ensure_ascii=False)
+    if name == "world_seed_novel":
+        d = api("GET", "/api/worlds")
+        world_id = d.get("current") or ""
+        if not world_id and d.get("worlds"):
+            world_id = d["worlds"][0].get("name", "")
+        if not world_id:
+            return json.dumps({"error": "尚无世界，请先 world_create 创建世界"}, ensure_ascii=False)
+        body = {"world_id": world_id, "project_name": args["project_name"]}
+        if args.get("language"):
+            body["language"] = args["language"]
+        r = api("POST", "/api/world/seed-novel", body, NOVEL_BASE)
+        return json.dumps({**r, "hint": "世界已播种成小说项目，到小说服务 48090 可查看/续写"}, ensure_ascii=False)
     if name == "world_novel_chapter":
         d = api("GET", f"/api/world/novel/chapter/{args['num']}")
         return json.dumps(d, ensure_ascii=False)
@@ -184,7 +200,7 @@ def rpc(msg):
         return {"jsonrpc": "2.0", "id": mid, "result": {
             "protocolVersion": PROTOCOL_VERSION,
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": "worldsim-mcp", "version": "1.2.0"}}}
+            "serverInfo": {"name": "worldsim-mcp", "version": "1.4.0"}}}
     if method == "notifications/initialized" or method == "notifications/cancelled":
         return None
     if method == "ping":

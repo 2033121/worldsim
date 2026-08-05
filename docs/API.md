@@ -101,6 +101,25 @@
 
 - GET / → 小说阅读前端
 - GET /api/novel/... → 章节/卷/元数据
+- POST /api/search → 联网搜索素材（写作页「🔍 搜素材」）。Tavily 内置后端。
+  ```json
+  {"query": "唐代长安城布局", "max": 5, "language": "zh"}
+  ```
+  ```json
+  {"results": [{"title": "...", "url": "...", "content": "...", "engine": "tavily"}]}
+  ```
+- POST /api/world/seed-novel → 世界→小说直接播种（零 LLM 调用）。把已模拟世界的世界书/角色/势力/近期事件播种成小说大纲与设定。
+  ```json
+  {"world_id": "灰潮纪元·孤岛净化厂", "project_name": "孤岛净化厂外传", "language": "zh"}
+  ```
+  ```json
+  {"project_name": "孤岛净化厂外传", "world_name": "...", "character_count": 5, "worldview_count": 12, "outline_chapter_count": 8, "day": 120}
+  ```
+
+## LLM 用量统计
+
+- GET /api/llm/stats → 全局实时用量总览（进程启动时间 + 各环节聚合 + 缓存 + 费用估算）
+- GET /api/llm/stats/history?window=hour|day → 按时间窗的 token 消耗历史（跨重启持久化）
 
 ## 错误格式
 

@@ -5,7 +5,7 @@
 
 ## 前置
 
-- [ ] Operit 已启用 `worldsim` 沙盒包（工具箱里可见，25 个工具）
+- [ ] Operit 已启用 `worldsim` 沙盒包（工具箱里可见，26 个工具）
 - [ ] `skills/worldsim/SKILL.md` 已就位
 - [ ] 已配置 LLM（WebUI 操作台填好 Base URL/模型/Key 并点"应用"）
 

@@ -145,7 +145,7 @@ WorldSim 提供标准 MCP Server（`worldsim-mcp/server.py`，零依赖），可
 
 ## 🔌 Operit 插件包
 
-本仓库是核心源码。打包好的 **Operit 插件包**（沙盒包 25 工具 + Skill + WebUI 控制台 + 15 主题包 + 886 条风格素材 + 验收清单）以 zip 形式随 Release 分发（CI 自动组装），可直接导入 Operit 使用。
+本仓库是核心源码。打包好的 **Operit 插件包**（沙盒包 26 工具 + Skill + WebUI 控制台 + 15 主题包 + 886 条风格素材 + 验收清单）以 zip 形式随 Release 分发（CI 自动组装），可直接导入 Operit 使用。
 
 ## 📂 目录说明
 

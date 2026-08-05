@@ -15,7 +15,7 @@
 | 参数 | `/absolute/path/to/worldsim-mcp/server.py`（Args 列表加这一项） |
 | 环境变量 | 留空 |
 
-4. 保存后，MCP 面板里 `worldsim` 显示已连接，展开能看到 25 个 `world_*` 工具
+4. 保存后，MCP 面板里 `worldsim` 显示已连接，展开能看到 26 个 `world_*` 工具
 
 > 也支持直接导入 JSON：`worldsim-mcp/mcp.json.example` 的内容粘贴到"JSON 导入"。
 
@@ -36,10 +36,12 @@
 - "用 world_create 开一个克苏鲁世界"
 - "world_loop_start 跑模拟，就绪了 world_novel_generate 写小说"
 
-## 工具清单（25 个）
+## 工具清单（26 个）
 
 `world_list` `world_select` `world_create` `world_init` `world_state` `world_run_day`
 `world_loop_start` `world_loop_stop` `world_loop_status` `world_readiness` `world_decisions`
 `world_decision_resolve` `world_chronicle` `world_memories` `world_foreshadows` `world_thinking`
-`world_tokens` `world_novel_list` `world_novel_generate` `world_novel_chapter` `world_themes`
+`world_tokens` `world_novel_list` `world_novel_generate` `world_seed_novel` `world_novel_chapter` `world_themes`
 `world_snapshots` `world_snapshot` `world_rewind` `world_webui`
+
+> `world_seed_novel` 走小说服务 48090，把当前世界直接播种成小说项目（零 LLM 调用）。
