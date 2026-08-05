@@ -341,7 +341,7 @@ func (ms *MemoryStore) Reflect(ctx context.Context, c *LLMClient, actor string) 
 	system := `你是{actor}。回顾最近经历，提炼 1~2 条"你学到的高阶认知"（对自己处境的判断、对他人的态度、对世界异常的直觉）。
 要求：必须基于下面列出的亲身经历，用第一人称；输出严格 JSON：{"reflections":["...","..."]}（每条不超过50字）`
 	system = strings.ReplaceAll(system, "{actor}", actor)
-	raw, err := c.Complete(ctx, system, sb.String())
+	raw, err := c.CompleteTier(ctx, "fast", system, sb.String())
 	if err != nil {
 		return ""
 	}

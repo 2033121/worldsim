@@ -394,7 +394,8 @@ func ProtagonistDecideLLM(ctx context.Context, c *LLMClient, st *engine.WorldSta
 	system += "\n\n【你眼中的世界（普通人的认知，不要表现出你本不该知道的事）】\n" + worldCtx
 	user := fmt.Sprintf("【我的状态】\n%s\n【我今天感知到的】\n%s\n【我的记忆（最近相关）】\n%s\n请按三问决策法决定今天的行动。", heroJSON, obsJSON, memories)
 
-	raw, err := c.Complete(ctx, system, user)
+	// 主角决策是每日高频调用，用 fast 档位（世界推进/事件生成同为 fast；无需让主角决策拖慢整日推进）
+	raw, err := c.CompleteTier(ctx, "fast", system, user)
 	if err != nil {
 		return nil, "", err
 	}

@@ -632,7 +632,18 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 		}
 	}
 
-	// ---------- 2. 世界推进（WorldAgent：LLM 优先，dry-run 兜底） ----------
+	// ---------- 3. 感知分发（§4.4：按主角位置/范围裁剪） ----------
+	// 提前构建主角感知与记忆（依赖 events，不依赖世界推进；供下方并行决策使用）
+	obs := s.buildObservation(s.events)
+	var memories string
+	if s.llm != nil {
+		// 记忆注入（§4.6：按相关性召回主角记忆）
+		memories = formatMemories(s.mem.Retrieve(s.heroName, "今天 近期 遭遇 关系 熟人 怪事 重要的事", 8))
+		s.mem.StrengthenRetrieval(s.heroName, s.mem.Retrieve(s.heroName, "今天 近期 遭遇 关系 熟人 怪事 重要的事", 8)) // 检索强化（hippo）
+	}
+
+	// ---------- 2+4. 世界推进 与 主角决策 并行（§性能：两者只读 state + LLM、仅依赖 events，互不依赖。
+	// 串行化时一天要先后等两次 LLM 完整返回；并行后墙钟时间≈max(两者)，显著缩短日耗时） ----------
 	advance := engine.Proposal{
 		CommandID:    s.nextCmd("world"),
 		ActorID:      "world_agent",
@@ -640,14 +651,59 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 		Type:         "state_change",
 		Reason:       fmt.Sprintf("Day %d 世界推进", s.day),
 	}
+	var action *engine.Proposal
 	if s.llm != nil {
-		if p, err := WorldAdvanceLLM(ctx, s.llm, s.engine.State(), s.events, engine.Rules{}, s.wb, s.OpenForeshadows(), s.currentArc); err == nil && p != nil {
-			advance.Changes = p.Changes
-			if p.Reason != "" {
-				advance.Reason = p.Reason
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		var heroErr error
+		wg.Add(2)
+		// 世界推进（WorldAgent：LLM 优先，dry-run 兜底）
+		go func() {
+			defer wg.Done()
+			p, err := WorldAdvanceLLM(ctx, s.llm, s.engine.State(), s.events, engine.Rules{}, s.wb, s.OpenForeshadows(), s.currentArc)
+			mu.Lock()
+			defer mu.Unlock()
+			if err == nil && p != nil {
+				advance.Changes = p.Changes
+				if p.Reason != "" {
+					advance.Reason = p.Reason
+				}
 			}
+		}()
+		// 主角决策（ProtagonistAgent：三问决策法 LLM / dry-run）
+		go func() {
+			defer wg.Done()
+			p, thinking, err := ProtagonistDecideLLM(ctx, s.llm, s.engine.State(), obs, s.heroName, s.wb, memories)
+			mu.Lock()
+			defer mu.Unlock()
+			if thinking != "" {
+				s.lastThinking = thinking
+				if s.thinkings == nil {
+					s.thinkings = make(map[int]string)
+				}
+				s.thinkings[s.day] = thinking
+			}
+			if err != nil {
+				heroErr = err
+			} else {
+				action = p // p 可能为 nil（维持现状）
+			}
+		}()
+		wg.Wait()
+		// 主角决策失败：记录并降级 dry-run
+		if heroErr != nil {
+			res.Chronicle = append(res.Chronicle, ChronicleEntry{
+				Day: s.day, Kind: "FACT", Time: now(),
+				Content:    "主角决策调用失败（降级为模板行动）：" + heroErr.Error(),
+				Visibility: "public",
+
+				Weight: 0.3, Tags: []string{"降级"}})
+			action = s.protagonistAct(s.events)
 		}
+	} else {
+		action = s.protagonistAct(s.events)
 	}
+	// 世界推进兜底 + 提交（无条件；LLM 失败/空时走 dry-run）
 	if len(advance.Changes) == 0 {
 		advance.Changes = s.worldAdvanceChanges()
 	}
@@ -658,39 +714,6 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 		return nil, fmt.Errorf("世界推进失败: %w", err)
 	}
 	res.Proposals = append(res.Proposals, advance)
-
-	// ---------- 3. 感知分发（§4.4：按主角位置/范围裁剪） ----------
-	obs := s.buildObservation(s.events)
-
-	// ---------- 4. 主角决策（ProtagonistAgent：三问决策法 LLM / dry-run） ----------
-	var action *engine.Proposal
-	if s.llm != nil {
-		// 记忆注入（§4.6：按相关性召回主角记忆）
-		memories := formatMemories(s.mem.Retrieve(s.heroName, "今天 近期 遭遇 关系 熟人 怪事 重要的事", 8))
-		s.mem.StrengthenRetrieval(s.heroName, s.mem.Retrieve(s.heroName, "今天 近期 遭遇 关系 熟人 怪事 重要的事", 8)) // 检索强化（hippo）
-		p, thinking, err := ProtagonistDecideLLM(ctx, s.llm, s.engine.State(), obs, s.heroName, s.wb, memories)
-		if thinking != "" {
-			s.lastThinking = thinking
-			if s.thinkings == nil {
-				s.thinkings = make(map[int]string)
-			}
-			s.thinkings[s.day] = thinking
-		}
-		if err != nil {
-			// LLM 失败：记录并降级 dry-run
-			res.Chronicle = append(res.Chronicle, ChronicleEntry{
-				Day: s.day, Kind: "FACT", Time: now(),
-				Content:    "主角决策调用失败（降级为模板行动）：" + err.Error(),
-				Visibility: "public",
-
-				Weight: 0.3, Tags: []string{"降级"}})
-			action = s.protagonistAct(s.events)
-		} else {
-			action = p // p 可能为 nil（维持现状）
-		}
-	} else {
-		action = s.protagonistAct(s.events)
-	}
 	if action != nil {
 		action.CommandID = s.nextCmd("hero")
 		action.ActorID = "protagonist"
