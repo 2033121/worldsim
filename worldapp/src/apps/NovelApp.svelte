@@ -1,14 +1,9 @@
 <script>
-  // NovelApp — 小说创作应用（过渡：iframe 嵌入 :48090 现有 WebUI）
-  // 后续 Phase 4 将逐步原生迁移，替换为原生 Svelte 页面。
-  const NOVEL_UI = import.meta.env.VITE_NOVEL_UI || 'http://localhost:48090/';
+  // NovelApp — 小说创作应用（原生渲染，Phase 4 迁移）
+  // 组件与 API 迁自 frontend，走统一网关 /api/novel/*（→ :48090）。
+  import Console from './novel/Console.svelte';
 </script>
 
-<div class="h-full w-full">
-  <iframe
-    src={NOVEL_UI}
-    class="w-full h-full border-0"
-    title="小说创作流水线"
-    sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
-  ></iframe>
+<div class="h-full w-full overflow-hidden">
+  <Console />
 </div>

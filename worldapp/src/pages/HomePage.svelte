@@ -4,8 +4,8 @@
 
   // 快捷入口（首屏）
   const quickLinks = [
-    { address: 'world', icon: '🌍', title: '世界模拟', desc: '题材研究 / 编年史 / 决策 / 小说 / 实体 / 世界书', color: 'from-sky-500 to-blue-600' },
-    { address: 'novel', icon: '📖', title: '小说创作', desc: '项目 / 大纲 / 写作 / 记忆 / 关系 / 技能 / 伏笔', color: 'from-violet-500 to-purple-600' },
+    { address: 'world', icon: '🌍', title: '世界模拟', desc: '题材研究 / 编年史 / 决策 / 小说 / 实体 / 世界书', accent: 'from-amber-500/15 to-orange-500/5', seal: '印' },
+    { address: 'novel', icon: '📖', title: '小说创作', desc: '项目 / 大纲 / 写作 / 记忆 / 关系 / 技能 / 伏笔', accent: 'from-rose-500/15 to-red-500/5', seal: '文' },
   ];
 </script>
 
@@ -20,13 +20,16 @@
   <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
     {#each quickLinks as q (q.address)}
       <button
-        class="card card-body bg-gradient-to-br {q.color} text-white text-left hover:shadow-xl hover:-translate-y-0.5 transition-all cursor-pointer"
+        class="paper card card-body bg-gradient-to-br {q.accent} text-left hover:shadow-xl hover:-translate-y-0.5 transition-all cursor-pointer group"
         on:click={() => navigateTo(q.address)}
       >
-        <div class="text-3xl mb-2">{q.icon}</div>
-        <div class="text-xl font-bold">{q.title}</div>
-        <div class="text-sm opacity-80">{q.desc}</div>
-        <div class="mt-3 text-sm opacity-90 flex items-center gap-1">进入 <span>→</span></div>
+        <div class="flex items-center justify-between">
+          <div class="text-3xl mb-2">{q.icon}</div>
+          <span class="seal bg-error/10 text-error px-2 py-0.5 rounded text-lg">{q.seal}</span>
+        </div>
+        <div class="text-xl font-bold text-base-content">{q.title}</div>
+        <div class="text-sm text-base-content/60">{q.desc}</div>
+        <div class="mt-3 text-sm text-primary flex items-center gap-1">进入 <span class="group-hover:translate-x-1 transition-transform">→</span></div>
       </button>
     {/each}
   </div>

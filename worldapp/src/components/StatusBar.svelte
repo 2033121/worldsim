@@ -7,5 +7,5 @@
     <span class="w-2 h-2 rounded-full bg-success inline-block"></span>
     服务正常
   </span>
-  <span class="flex-1 truncate text-right">{statusText}</span>
+  <span class="flex-1 truncate text-right">{$statusText}</span>
 </div>
