@@ -26,7 +26,7 @@ jobs:
             exe=""
             [ "$os" = "windows" ] && exe=".exe"
             echo "==> building $os/$arch"
-            GOOS=$os GOARCH=$arch CGO_ENABLED=0 go build -ldflags "-s -w" -o "dist/worldsim-$os-$arch$exe" .
+            GOOS=$os GOARCH=$arch CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o "dist/worldsim-$os-$arch$exe" .
           done
 
       - name: Package

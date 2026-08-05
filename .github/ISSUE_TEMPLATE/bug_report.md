@@ -24,7 +24,7 @@ assignees: ''
 **环境信息**
 - 系统：Linux / Windows / macOS / Android
 - 运行方式：源码构建 / 插件包 / MCP
-- 版本：v1.2.0 / main
+- 版本：v1.4.0 / main
 - LLM 中转站：如不便透露可省略
 
 **附加信息**
