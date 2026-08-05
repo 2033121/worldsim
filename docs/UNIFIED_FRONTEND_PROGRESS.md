@@ -73,3 +73,36 @@
 - Phase 6 生产加固 + 端到端验证 + 文档。
 
 ---
+
+## 2026-08-05 — 小说创作功能与界面全面优化
+
+### 需求
+1. 小说创作页功能增强：扩充内容显示区、修复失效按钮、优化按钮设计、实现正文编辑。
+2. 首页界面优化：重新设计布局与视觉、优化交互体验。
+3. 技术完备：稳定可靠、界面友好、可维护可扩展。
+
+### 进展
+- **失效按钮修复**：novel 路由已从 hash 迁移为 store 驱动（`lib/router.js`），但 Writing/Outline/Foreshadows 仍用 `window.location.hash`，点击无效。已统一改为 `navigate('outline'|'foreshadows'|'writing')`。
+- **扩充内容显示区**：写作页正文容器高度由 `max-h-[calc(100vh-420px)]` 提升到 `max-h-[calc(100vh-360px)]`，章节列表同步调整，长文可完整滚动查看。
+- **正文编辑（整章全文编辑）**：新增「📝 整章编辑」按钮，进入大 textarea 编辑态，复用后端 `POST /api/chapter/edit`（`operation=replace_text`，`old_text` 快照 / `new_text` 新稿）实现保存；取消恢复快照。与块级编辑互斥。编辑态顶部显示提示 + 实时字数。
+- **按钮视觉统一**：修复整章编辑按钮重复图标（标签内置 📝 又加前缀）；保存按钮加深色图标；统一主操作 `btn-primary`/`btn-success`、次操作 `btn-ghost`、危险操作 `text-error`、分页 `join` 分组，`gap-2 flex-wrap` 保证窄屏换行。
+- **i18n 补充**：新增 `writing.fullEdit.hint` 等中英文键。
+- **首页重构**：Hero 区（印章「演/创」+ 标题 + 亮点标签）；两大核心入口卡片（世界模拟/小说创作，含印章、tagline、功能勾选列表、hover 上浮）；「全部页面」分组按钮（`btn-ink` 墨色风格）；底部快捷键提示。整体宣纸水墨风格。
+
+### 遇到的问题与解决方案
+1. **浏览器子智能体误报"黑屏"**：子智能体在服务器重启瞬间访问，命中 `ERR_EMPTY_RESPONSE`（`/api/novel/events`、`/api/worlds`），且浏览器会话恢复旧标签。待服务稳定后重测，宣纸米色正常渲染。
+2. **Playwright `networkidle` 超时**：小说应用有 SSE/长轮询连接，`networkidle` 永不到达。改用 `domcontentloaded` + 固定等待。
+
+### 验证
+- `npm run build` 成功（产物 `uiteg/`）；Linux 交叉编译 + `docker cp` 部署，容器 healthy。
+- Playwright 全新会话实测：首页（H1、2 卡片、3 全部页面按钮）渲染正确，点击「小说创作」进入应用成功，**无 JS 报错、无 404**。
+- 集成浏览器 DOM 快照确认：首页两个卡片含印章「境/文」、功能勾选列表、全部页面按钮组全部渲染。
+- 三服务均 200：`48092 /`、`48090 /api/projects`、`48091 /api/worlds`。
+- 后端 `POST /api/chapter/edit`（`replace_text`）路由确认存在。
+
+### 交付物
+- 计划文档：`docs/NOVEL_UI_OPTIMIZATION_PLAN.md`
+- 验证脚本：`scripts/verify_ui.py`
+- 改动文件：`writing/Outline/Foreshadows/HomePage` 页面、`zh.js`/`en.js`、构建产物 `uiteg/`
+
+---

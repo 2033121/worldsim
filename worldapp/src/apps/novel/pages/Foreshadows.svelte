@@ -6,6 +6,7 @@
     foreshadowSuggestions, foreshadowShowSuggestions
   } from '../lib/stores.js';
   import { t } from '../lib/i18n/index.js';
+  import { navigate } from '../lib/router.js';
 
   let viewMode = 'list'; // list | timeline | markdown
   let roadmapMarkdown = '';
@@ -46,7 +47,7 @@
   }
 
   function gotoOutline() {
-    window.location.hash = '#outline';
+    navigate('outline');
   }
 
   function buildTimeline(items, chapterCount) {

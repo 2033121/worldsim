@@ -115,6 +115,48 @@
     insertAfterId = null;
   }
 
+  // —— 整章全文编辑模式（复用 POST /api/chapter/edit，operation=replace_text）——
+  let fullEdit = false;          // 整章编辑模式开关
+  let fullEditSnapshot = '';     // 进入整章编辑前的正文快照
+  let fullEditSaving = false;
+
+  function startFullEdit() {
+    if (!ch || $taskRunning) return;
+    fullEdit = true;
+    fullEditSnapshot = chapterContent;
+    cancelBlockOps();
+    showRevise = false;
+    hideQuotePopover();
+  }
+
+  function cancelFullEdit() {
+    fullEdit = false;
+    chapterContent = fullEditSnapshot;
+  }
+
+  async function saveFullEdit() {
+    if (!ch || fullEditSaving) return;
+    const newText = chapterContent;
+    if (newText === fullEditSnapshot) { fullEdit = false; return; }
+    fullEditSaving = true;
+    try {
+      const res = await api('POST', '/api/chapter/edit', {
+        num: ch.num,
+        operation: 'replace_text',
+        old_text: fullEditSnapshot,
+        new_text: newText,
+      });
+      const updated = res.chapter || res;
+      applyChapter(ch.num, updated);
+      fullEdit = false;
+      addToast($t('writing.fullEdit.saved', { num: ch.num }), 'success');
+    } catch (e) {
+      addToast(e.message, 'error');
+    } finally {
+      fullEditSaving = false;
+    }
+  }
+
   async function saveBlockEdit() {
     if (editingBlockId == null || !editingText.trim() || !ch) return;
     try {
@@ -391,7 +433,7 @@
     <div class="text-5xl mb-4">✍️</div>
     <p class="text-base mb-1">{$t('writing.notReady.title')}</p>
     <p class="text-sm text-base-content/35 mb-6">{$t('writing.notReady.hint')}</p>
-    <button class="btn btn-primary btn-sm" on:click={() => window.location.hash = '#outline'}>{$t('writing.notReady.goto')}</button>
+    <button class="btn btn-primary btn-sm" on:click={() => navigate('outline')}>{$t('writing.notReady.goto')}</button>
   </div>
 {:else}
   <div class="space-y-3">
@@ -466,7 +508,7 @@
         <div class="card-body p-4 gap-2">
           <div class="flex items-center justify-between gap-2">
             <h3 class="font-medium text-sm">{$t('writing.fs.title')}</h3>
-            <button class="btn btn-ghost btn-xs" on:click={() => window.location.hash = '#foreshadows'}>{$t('writing.fs.goto')}</button>
+            <button class="btn btn-ghost btn-xs" on:click={() => navigate('foreshadows')}>{$t('writing.fs.goto')}</button>
           </div>
           <div class="flex flex-wrap gap-2 text-xs">
             <span class="badge badge-ghost">{$t('writing.fs.total', { n: foreshadows.length })}</span>
@@ -489,7 +531,7 @@
       <div class="card bg-base-200 shadow-sm">
         <div class="card-body p-4 flex items-center justify-between gap-2">
           <p class="text-sm text-base-content/50">{$t('writing.fs.none')}</p>
-          <button class="btn btn-ghost btn-xs" on:click={() => window.location.hash = '#foreshadows'}>{$t('writing.fs.setup')}</button>
+          <button class="btn btn-ghost btn-xs" on:click={() => navigate('foreshadows')}>{$t('writing.fs.setup')}</button>
         </div>
       </div>
     {/if}
@@ -499,7 +541,7 @@
     <!-- 章节区 -->
     <div class="grid grid-cols-[230px_1fr] gap-3" style="min-height:400px">
       <!-- 章节列表 -->
-      <div class="card bg-base-200 shadow-sm overflow-y-auto max-h-[calc(100vh-280px)]">
+      <div class="card bg-base-200 shadow-sm overflow-y-auto max-h-[calc(100vh-240px)]">
         <ul class="menu menu-sm p-0 w-full">
           {#each chapters as c, i}
             <li>
@@ -545,7 +587,26 @@
                 </details>
               {/if}
 
-              {#if displayContent}
+              {#if fullEdit}
+                <div class="flex items-center justify-between gap-2">
+                  <div class="text-xs text-warning/80 flex items-center gap-1.5">
+                    <span class="loading loading-dots loading-xs"></span>
+                    {$t('writing.fullEdit.hint')}
+                  </div>
+                  <span class="text-xs text-base-content/40">{$t('writing.chapter.words', { n: chapterContent.length.toLocaleString() })}</span>
+                </div>
+                <textarea
+                  class="textarea w-full bg-base-300 text-[15px] leading-loose font-serif"
+                  style="min-height: 420px;"
+                  bind:value={chapterContent}
+                  disabled={fullEditSaving || $taskRunning}
+                  placeholder={$t('writing.fullEdit.placeholder')}
+                ></textarea>
+                <div class="flex gap-2 justify-end mt-1">
+                  <button class="btn btn-ghost btn-sm" on:click={cancelFullEdit} disabled={fullEditSaving}>{$t('common.cancel')}</button>
+                  <button class="btn btn-primary btn-sm" on:click={saveFullEdit} disabled={fullEditSaving || $taskRunning || !chapterContent.trim()}>💾 {$t('writing.fullEdit.save')}</button>
+                </div>
+              {:else if displayContent}
                 {#if isStreamingThis}
                   <div class="text-xs text-warning/80 flex items-center gap-1.5">
                     <span class="loading loading-dots loading-xs"></span>
@@ -553,7 +614,7 @@
                   </div>
                 {/if}
                 <!-- svelte-ignore a11y-no-static-element-interactions -->
-                <div bind:this={contentEl} class="bg-base-300 rounded-lg p-4 text-[15px] chapter-content reading-area max-h-[calc(100vh-420px)] min-h-[200px] overflow-y-auto"
+                <div bind:this={contentEl} class="bg-base-300 rounded-lg p-4 text-[15px] chapter-content reading-area max-h-[calc(100vh-360px)] min-h-[260px] overflow-y-auto"
                      on:mouseup={checkContentSelection}
                      on:scroll={hideQuotePopover}>
                   {#if isStreamingThis}
@@ -631,11 +692,12 @@
                   <button class="btn btn-success btn-sm" on:click={doConfirm} disabled={$taskRunning}>{$t('writing.btn.confirm')}</button>
                 {/if}
                 {#if hasContent && ch.status !== 'writing'}
+                  <button class="btn btn-ghost btn-sm" on:click={startFullEdit} disabled={$taskRunning} title={$t('writing.btn.fullEdit.tip')}>{$t('writing.btn.fullEdit')}</button>
                   <button class="btn btn-ghost btn-sm" on:click={() => showRevise = !showRevise} disabled={$taskRunning}>{$t('writing.btn.revise')}</button>
                   {#if hasPolishSkills}
                     <button class="btn btn-ghost btn-sm" on:click={doPolish} disabled={$taskRunning} title={$t('writing.btn.polish.tip')}>{$t('writing.btn.polish')}</button>
                   {/if}
-                  <button class="btn btn-ghost btn-sm" on:click={copyContent}>{$t('writing.btn.copy')}</button>
+                  <button class="btn btn-ghost btn-sm" on:click={copyContent} title={$t('common.copy')}>{$t('writing.btn.copy')}</button>
                 {/if}
                 <div class="flex-1"></div>
                 <div class="join">

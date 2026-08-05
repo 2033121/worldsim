@@ -2,6 +2,7 @@
   import { api } from '../lib/api.js';
   import { progress, config, streamingContent, streamingChapterIdx, taskRunning, addToast, showConfirm, outlineCharacterSuggestions, outlineCharacterShowSuggestions, settings } from '../lib/stores.js';
   import { t } from '../lib/i18n/index.js';
+  import { navigate } from '../lib/router.js';
   import { onMount, tick } from 'svelte';
   import ConfigChangePanel from '../components/ConfigChangePanel.svelte';
 
@@ -130,7 +131,7 @@
         await api('POST', '/api/outline/confirm');
         progress.set(await api('GET', '/api/progress'));
         addToast($t('outline.toasts.outlineConfirmed'), 'success');
-        window.location.hash = '#writing';
+        navigate('writing');
       } catch (e) { addToast(e.message, 'error'); }
     });
   }
