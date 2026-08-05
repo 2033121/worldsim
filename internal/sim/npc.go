@@ -14,7 +14,7 @@ import (
 // ---------- NPC 互动（§5.1 场景状态机：Init → Act → GM裁决 → React） ----------
 
 type DialogueTurn struct {
-	Speaker string `json:"speaker"` // npc_老陈 | 林默
+	Speaker string `json:"speaker"` // npc_某角色名 | 主角名
 	Speech  string `json:"speech"`
 	Mood    string `json:"mood,omitempty"`
 }
@@ -27,14 +27,15 @@ func (s *Simulator) NPCRespond(ctx context.Context, npcName, npcMemory, scene st
 	}
 	// 注入完整人设档案（性格/习惯/社交/行为/思考方式）——动态内容放 user，system 前缀稳定利于缓存
 	profile := s.FormatSheetForPrompt(npcName)
-	worldCtx := s.worldBriefForDialogue()
 	system := `你是这个世界里的一个真实存在的人。你必须有灵魂——言行由你的人格档案决定，保持一致性（人格档案见用户消息）。
 规则：
-1. 输出严格 JSON：{"speech":"你说出口的一句话（口语化，带你的习惯/口头禅，符合身份，不超过50字）","mood":"当前情绪","relation_delta":0.1}
+1. 输出严格 JSON：{"speech":"你说出口的一句话（口语化，带你的习惯/口头禅，符合身份，不超过50字）","mood":"当前情绪","relation_delta":<数值>}
 2. relation_delta 是你对主角好感度的变化（-0.3~0.3）
 3. 你的习惯和性格会自然流露在语言里（小动作、口头禅、思维方式）；话里有话可以，但别直白剧透；不知道的事不要装知道。`
-	user := fmt.Sprintf("你是%s。\n人格档案（言行必须符合，保持一致性）：\n%s\n\n世界背景：\n%s\n\n你的记忆：\n%s\n\n当前场景：%s\n你看到主角（%s）来了。请自然地、按你的性格说一句话。",
-		npcName, profile, worldCtx, npcMemory, scene, s.heroName)
+
+	// 动态内容全部放 user（保证 system 前缀字节级稳定 → 缓存命中）
+	user := fmt.Sprintf("你是%s。\n人格档案（言行必须符合，保持一致性）：\n%s\n\n你的记忆：\n%s\n\n当前场景：%s\n你看到主角（%s）来了。请自然地、按你的性格说一句话。",
+		npcName, profile, npcMemory, scene, s.heroName)
 
 	raw, err := s.llm.CompleteTier(ctx, "fast", system, user)
 	if err != nil {
@@ -59,13 +60,13 @@ func (s *Simulator) NPCRespond(ctx context.Context, npcName, npcMemory, scene st
 }
 
 // HeroRespondLLM 主角在对话中的回应（简短自然，基于感知与性格；动态内容放user保持前缀稳定）
-func HeroRespondLLM(ctx context.Context, c *LLMClient, hero, heroProfile, other, npcSpeech string, wb *worldbook.Worldbook) (DialogueTurn, error) {
+func HeroRespondLLM(ctx context.Context, c *LLMClient, hero, heroProfile, npcSpeech string, wb *worldbook.Worldbook) (DialogueTurn, error) {
 	ctx = llm.WithSpan(ctx, "主角回应")
 	worldCtx := ""
 	if wb != nil {
-		worldCtx = wb.ForWorldBrief()
+		worldCtx = wb.ForProtagonist(hero, heroProfile)
 	}
-	system := `你是主角{hero}，活在这个世界里的真人。{world}
+	system := `你是主角{hero}，一个活在这个世界里的真人。{world}
 
 规则：
 1. 输出严格 JSON：{"speech":"你的回应（口语化，不超过40字）","thinking":"你心里怎么想（一句话）"}
@@ -73,9 +74,8 @@ func HeroRespondLLM(ctx context.Context, c *LLMClient, hero, heroProfile, other,
 	system = strings.ReplaceAll(system, "{hero}", hero)
 	system = strings.ReplaceAll(system, "{world}", worldCtx)
 
-	// 对话对象说了什么 = 动态，放 user（system 前缀稳定）
-	user := fmt.Sprintf("你正在和{other}对话，{other}说：\"%s\"\n请用你的身份与性格自然地回应一句话。", npcSpeech)
-	user = strings.ReplaceAll(user, "{other}", other)
+	// 对方说了什么 = 动态，放 user（system 前缀稳定）
+	user := fmt.Sprintf("你正在和面前的人对话，对方说：\"%s\"\n请用你的身份与性格自然地回应一句话。", npcSpeech)
 
 	raw, err := c.CompleteTier(ctx, "fast", system, user)
 	if err != nil {
@@ -105,14 +105,15 @@ func HeroRespondLLM(ctx context.Context, c *LLMClient, hero, heroProfile, other,
 // 替代原来的 3 次独立调用 → 每天省 2 次 LLM 调用（大幅提速，质量靠人格卡保持）
 func (s *Simulator) DialogueBatchLLM(ctx context.Context, npcName, npcMemory, heroProfile, scene string) ([]DialogueTurn, error) {
 	ctx = llm.WithSpan(ctx, "NPC批量对话")
-	// system 保持静态（不注入 npc/人设/主角），动态内容全部放 user → 前缀稳定，利于 DeepSeek 缓存
-	system := `你是对话导演，负责生成一场真实的街头偶遇对话。规则：
+	// system 保持静态（不注入 npc/人设/主角），动态内容全部放 user → 前缀稳定，利于缓存
+	system := `你是对话导演，负责生成一场真实的日常相遇对话。规则：
 1. 输出严格 JSON 数组，恰好 3 段：
 [{"speaker":"NPC名","speech":"NPC开口的话（口语化，带习惯/口头禅，不超过50字）","mood":"情绪"},
 {"speaker":"主角名","speech":"主角回应（自然，符合性格，不超过40字）"},
 {"speaker":"NPC名","speech":"NPC收尾（呼应前文，可话里有话，不超过50字）"}]
 2. 言行符合各自人格（见用户消息里给出的人设）；NPC 不能全知（不知道的事不装知道，世界秘密不能说）；对话有生活气息、像真人聊天。
 3. 根据场景自然切入，别生硬，别喊名字式开场。`
+
 	profile := s.FormatSheetForPrompt(npcName)
 	user := fmt.Sprintf("NPC：%s\n人格档案（言行必须符合，保持一致性）：\n%s\n\n主角：%s，性格：%s\n\nNPC 记忆：\n%s\n\n当前场景：%s\n请按规则生成 3 段对话。",
 		npcName, profile, s.heroName, heroProfile, npcMemory, scene)
@@ -140,14 +141,24 @@ func (s *Simulator) RunDialogue(ctx context.Context, ev EventCard) ([]DialogueTu
 	var turns []DialogueTurn
 
 	// NPC 人设与记忆（从实体 extra 读取；无则用世界第一个非主角实体）
+	// 优先选 active 角色（mentioned=已淡出，只在编年史里被提起，不主动登场）
 	npcName := ""
 	if len(ev.NPCs) > 0 {
-		npcName = ev.NPCs[0]
+		npcName = ev.NPCs[0] // 事件明确指定 NPC 时，即使 mentioned 也要登场（背景人物被唤醒）
 	} else {
-		for n := range s.engine.State().Entities {
-			if n != s.heroName {
-				npcName = n
-				break
+		for n, ent := range s.engine.State().Entities {
+			if n == s.heroName || ent.Status != "active" {
+				continue
+			}
+			npcName = n
+			break
+		}
+		if npcName == "" {
+			for n := range s.engine.State().Entities {
+				if n != s.heroName {
+					npcName = n
+					break
+				}
 			}
 		}
 	}
@@ -179,7 +190,7 @@ func (s *Simulator) RunDialogue(ctx context.Context, ev EventCard) ([]DialogueTu
 		if len(turns) > 0 {
 			if s.llm != nil {
 				heroProfile := s.heroProfile()
-				t, err := HeroRespondLLM(ctx, s.llm, s.heroName, heroProfile, npcName, turns[0].Speech, s.wb)
+				t, err := HeroRespondLLM(ctx, s.llm, s.heroName, heroProfile, turns[0].Speech, s.wb)
 				if err == nil {
 					turns = append(turns, t)
 				} else {
@@ -205,6 +216,19 @@ func (s *Simulator) RunDialogue(ctx context.Context, ev EventCard) ([]DialogueTu
 		Changes: s.UpdateRelation(s.heroName, npcName, 0.05, 0.03, "与"+npcName+"的日常对话"),
 		Reason:  "与" + npcName + "的对话互动",
 	}
+	// 记录最近出场日（淡出机制依赖：长时间没见的配角会自动淡出）
+	// 若该角色已淡出（mentioned）但事件又让他登场 → 恢复 active（背景人物重新走上前台）
+	if ent, ok := s.engine.State().Entities[npcName]; ok {
+		if ent.Status == "mentioned" {
+			prop.Changes = append(prop.Changes,
+				engine.Change{Path: "entities." + npcName + ".status", Op: "set", Value: "active"},
+				engine.Change{Path: "entities." + npcName + ".extra.revived_day", Op: "set", Value: s.day},
+			)
+		}
+	}
+	prop.Changes = append(prop.Changes,
+		engine.Change{Path: "entities." + npcName + ".extra.last_seen_day", Op: "set", Value: s.day},
+	)
 	return turns, prop, nil
 }
 
@@ -249,5 +273,5 @@ func (s *Simulator) heroProfile() string {
 			return p
 		}
 	}
-	return "本地讨生活的普通人，日子过得紧巴但心气还在。"
+	return "这个世界里的一名普通人，有自己的日子要过。"
 }

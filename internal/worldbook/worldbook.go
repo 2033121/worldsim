@@ -13,24 +13,27 @@ import (
 )
 
 type Worldbook struct {
-	Title         string
-	A1Worldview   string // 世界观（含隐藏真相部分）
-	A2Physics     string // 物理/超自然规则（L1）
-	A3Society     string // 社会结构（L2）
-	A4Geography   string // 地理（L3）
-	A5Factions    string // 势力速览（明面部分）
-	A6GoalChain   string // 主角目标链（长期/阶段/即时，网文引擎）
-	A7PowerSys    string // 能力成长体系（等级/解锁/升级时刻，网文引擎）
-	A8Villain     string // 反派行动线（谁在动/怎么压迫，网文引擎）
-	B1Secrets     string // 世界秘密（L5）
-	B2EventPool   string // 事件类型池（导演内部）
-	B3ArcPlan     string // 全书弧线建议（导演内部）
+	Title       string
+	A1Worldview string // 世界观（含隐藏真相部分）
+	A2Physics   string // 物理/超自然规则（L1）
+	A3Society   string // 社会结构（L2）
+	A4Geography string // 地理（L3）
+	A5Factions  string // 势力速览（明面部分）
+	A6GoalChain    string // 主角目标链（长期/阶段/即时，网文引擎）
+	A7PowerSys     string // 能力成长体系（等级/解锁/升级时刻，网文引擎）
+	A8Villain      string // 反派行动线（谁在动/怎么压迫，网文引擎）
+	A9GoldenFinger string // 金手指设计（稀缺性/代价性/成长性+展示五步，网文DNA）
+	A10PayoffRhythm string // 爽点循环规划（四类爽点交替+密度表+首次爽点时机，网文DNA）
+	A11MapProgression string // 地图阶梯（2~4阶段+每阶段境界门槛+爽点重置，网文DNA）
+	A12FaceSlapCycle string // 打脸周期表（被压迫→打脸→展示 的周期安排，网文DNA）
+	B1Secrets   string // 世界秘密（L5）
+	B2EventPool string // 事件类型池（导演内部）
+	B3ArcPlan   string // 全书弧线建议（导演内部）
 	B4Foreshadows string // 隐藏伏笔清单（导演内部）
 	B5EventPool   string // 事件谱（本世界会发生的事，事件生成器的弹药库）
-	C0Tone        string // 题材基调（本世界的讲事风格：题材类型/主角人设/核心爽点/感情线定位/禁忌——所有Agent遵守的灵魂）
-	CNarrative    string // 叙事约束（小说化专属）
-	DSafety       string // 内容安全边界
-	Raw           string
+	CNarrative  string // 叙事约束（小说化专属）
+	DSafety     string // 内容安全边界
+	Raw         string
 	// 深层世界观层（E段：世界一开始就很大，随时间渐进揭示——冰山理论）
 	DeferredLayers []DeferredLayer
 	pendingMarker  string // 解析中的E段标题触发标记（临时）
@@ -61,6 +64,7 @@ func Parse(raw string) *Worldbook {
 	w := &Worldbook{Raw: raw}
 	lines := strings.Split(raw, "\n")
 	var current []string
+	var prevSec string // 上一个普通 section 名（A1~A12/B1~B5/C/D）
 	var eSec, eMarker string
 	var eBody []string
 	// flushE 把已收集的E段正文压入 DeferredLayers
@@ -110,14 +114,22 @@ func Parse(raw string) *Worldbook {
 		case "A4":
 			w.A4Geography = body
 		case "A5":
-			w.A5Factions = body
-		case "A6":
-			w.A6GoalChain = body
-		case "A7":
-			w.A7PowerSys = body
-		case "A8":
-			w.A8Villain = body
-		case "B1":
+		w.A5Factions = body
+	case "A6":
+		w.A6GoalChain = body
+	case "A7":
+		w.A7PowerSys = body
+	case "A8":
+		w.A8Villain = body
+	case "A9":
+		w.A9GoldenFinger = body
+	case "A10":
+		w.A10PayoffRhythm = body
+	case "A11":
+		w.A11MapProgression = body
+	case "A12":
+		w.A12FaceSlapCycle = body
+	case "B1":
 			w.B1Secrets = body
 		case "B2":
 			w.B2EventPool = body
@@ -127,29 +139,46 @@ func Parse(raw string) *Worldbook {
 			w.B4Foreshadows = body
 		case "B5":
 			w.B5EventPool = body
-		case "C0":
-			w.C0Tone = body
-		case "C1":
-			// C1 文风：兼容旧世界书（含"题材基调"），映射到基调字段。
-			// 若已显式定义 C0（更精确的基调守则），则 C1 作为增量补充。
-			if w.C0Tone == "" {
-				w.C0Tone = body
-			} else {
-				w.C0Tone = w.C0Tone + "\n\n" + body
-			}
 		case "C":
+			w.CNarrative = body
+		case "C1":
 			w.CNarrative = body
 		case "D":
 			w.DSafety = body
 		}
 	}
+
+	// isSectionCode 判断是否为合法的世界书章节码：
+	//   A1~A12（两位数以内）、B1~B5、C/C1、D、E1~E9
+	//   注意：A10/A11/A12 是 3 字符，不能用 len==2 判断
+	isSectionCode := func(s string) bool {
+		if s == "" {
+			return false
+		}
+		switch s[0] {
+		case 'A', 'B', 'E':
+			if len(s) < 2 {
+				return false
+			}
+			for i := 1; i < len(s); i++ {
+				if s[i] < '0' || s[i] > '9' {
+					return false
+				}
+			}
+			return true
+		case 'C', 'D':
+			return s == "C" || s == "C1" || s == "D"
+		}
+		return false
+	}
+
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		// 匹配 "## A1 世界观" / "## A2 物理与超自然规则" / "## B1 ..." / "## E1 ..." 等
 		if strings.HasPrefix(trimmed, "## ") {
 			parts := strings.SplitN(strings.TrimPrefix(trimmed, "## "), " ", 2)
 			sec := strings.ToUpper(strings.TrimSpace(parts[0]))
-			if len(sec) == 2 && (sec[0] == 'A' || sec[0] == 'B' || sec[0] == 'C' || sec[0] == 'D' || sec[0] == 'E') {
+			if isSectionCode(sec) {
 				if sec[0] == 'E' {
 					// E段独立收集：flush上一个E段，开始新E段
 					flushE()
@@ -158,16 +187,18 @@ func Parse(raw string) *Worldbook {
 					if len(parts) > 1 {
 						head := parts[1]
 						if idx := strings.Index(head, "【"); idx >= 0 {
-							rest := head[idx:]
-							if end := strings.Index(rest, "】"); end > 0 {
-								eMarker = strings.TrimSpace(rest[len("【"):end])
-							}
+						rest := head[idx:]
+						if end := strings.Index(rest, "】"); end > 0 {
+							eMarker = strings.TrimSpace(rest[len("【"):end])
 						}
+					}
 					}
 					continue
 				}
+				// 普通段：先把已收集的正文归到上一个 section，再开始新 section
 				flushE()
-				collect(sec)
+				collect(prevSec)
+				prevSec = sec
 				current = []string{}
 				if w.Title == "" && sec == "A1" {
 					w.Title = strings.TrimSpace(parts[1])
@@ -186,24 +217,9 @@ func Parse(raw string) *Worldbook {
 			current = append(current, line)
 		}
 	}
-	// 文件末尾：flush残留的E段 + 最后一个普通段
+	// 文件末尾：flush残留的E段 + 把最后一段正文归到最后一个 section
 	flushE()
-	if len(lines) > 0 {
-		sec := ""
-		for _, l := range lines {
-			t := strings.TrimSpace(l)
-			if strings.HasPrefix(t, "## ") {
-				p := strings.SplitN(strings.TrimPrefix(t, "## "), " ", 2)
-				s := strings.ToUpper(strings.TrimSpace(p[0]))
-				if len(s) == 2 && (s[0] == 'A' || s[0] == 'B' || s[0] == 'C' || s[0] == 'D') {
-					sec = s
-				}
-			}
-		}
-		if sec != "" {
-			collect(sec)
-		}
-	}
+	collect(prevSec)
 	return w
 }
 
@@ -295,7 +311,7 @@ func (w *Worldbook) RevealedAll() string {
 	return strings.TrimSpace(sb.String())
 }
 
-// ForProtagonist 主角视角：社会常识+地区常识+明面势力+主角人格与基调；物理规则用"角色认知视角"
+// ForProtagonist 主角视角：社会常识+地区常识+明面势力；物理规则用"角色认知视角"
 func (w *Worldbook) ForProtagonist(heroName, heroProfile string) string {
 	var sb strings.Builder
 	sb.WriteString("【世界·你眼中的样子（普通人的认知）】\n")
@@ -308,11 +324,15 @@ func (w *Worldbook) ForProtagonist(heroName, heroProfile string) string {
 	if w.A5Factions != "" {
 		sb.WriteString("· 你听过的势力：\n" + w.A5Factions + "\n")
 	}
-	// L1 角色认知视角：你确信什么、见过什么，由你的亲身经历决定（不再硬编码"从未见过超自然"，否则会与带超自然设定的世界矛盾）
-	if heroProfile != "" {
-		sb.WriteString("· 你自己（你是谁、经历过什么、性格如何）：" + heroProfile + "\n")
+	// L1 角色认知视角：只描述"你作为普通人相信什么"，真值不透露（按世界书的普通人视角描述）
+	if w.A1Worldview != "" {
+		sb.WriteString("· 关于这个世界，你作为普通人的认知：\n" + w.A1Worldview + "\n")
+	} else {
+		sb.WriteString("· 关于这个世界，你只相信自己亲眼见过、亲耳听过的事。\n")
 	}
-	sb.WriteString(w.ForTone())
+	if heroProfile != "" {
+		sb.WriteString("· 你自己：" + heroProfile + "\n")
+	}
 	return sb.String()
 }
 
@@ -331,66 +351,49 @@ func (w *Worldbook) ForWorldAgent() string {
 	if w.B4Foreshadows != "" {
 		sb.WriteString("B4 伏笔清单：\n" + w.B4Foreshadows + "\n")
 	}
-	sb.WriteString(w.ForTone())
 	return sb.String()
 }
 
-// ForTone 题材基调执行守则：本世界的"讲事灵魂"，所有 Agent 必须遵守。
-// 决定事件怎么发生、角色怎么行动、剧情朝哪走——防止"设定对但演出来跑偏"（如把喜剧写成正剧/言情）。
-func (w *Worldbook) ForTone() string {
-	var sb strings.Builder
-	sb.WriteString("【题材基调（本世界的讲事风格与灵魂，所有 Agent 必须严格遵守——它决定事件怎么发生、主角怎么行动、剧情朝哪走）】\n")
-	if strings.TrimSpace(w.C0Tone) != "" {
-		sb.WriteString(w.C0Tone + "\n")
-	} else {
-		sb.WriteString("（本世界未显式定义题材基调——请根据 A1 世界观的题材类型、A6 主角目标与主角身份，推断本世界的讲事风格：是喜剧/乐子人、还是正剧/热血/悬疑/末世求生？并在事件生成与角色行动中贯彻到底，不要写得四平八稳。）\n")
-	}
-	sb.WriteString("执行总则：\n")
-	sb.WriteString("· 事件与角色行动必须贴合基调：基调是喜剧/乐子人时，事件要有爽点、梗、脑洞反转，主角主动搞事，节奏轻快，杜绝拖沓言情；基调是正剧/热血时再走厚重压迫。\n")
-	sb.WriteString("· 主角人格必须符合基调（乐子人/热血/腹黑/惜字如金…），行动要带出这种人格，不能把主角写成四平八稳的正剧工具人。\n")
-	sb.WriteString("· 感情线（romance）在本世界是\"调味\"还是\"主线\"，由基调决定：基调未强调感情主线时，感情线只能作为轻松点缀，绝不能反客为主主导剧情。\n")
-	return sb.String()
-}
-
-// ForGM 总导演视角：完整世界背景（GM 是唯一知情人，规划剧情段落需掌握全量设定）
+// ForGM 总导演视角：世界观+规则+目标+能力+反派+网文DNA（金手指/爽点/地图/打脸）+弧线+伏笔
+// 总导演需要完整的网文蓝图来规划"目标→行动→收获→展示"四步循环
 func (w *Worldbook) ForGM() string {
 	var sb strings.Builder
-	sb.WriteString("【世界背景（你是总导演，唯一知情人，规划剧情段落用）】\n")
-	if w.A1Worldview != "" {
-		sb.WriteString("A1 世界观：\n" + w.A1Worldview + "\n")
-	}
+	sb.WriteString("【总导演蓝图（你是CEO，按网文方法论规划剧情段落）】\n")
+	sb.WriteString("A1 世界观：\n" + w.A1Worldview + "\n")
 	if w.A2Physics != "" {
-		sb.WriteString("A2 规则：\n" + w.A2Physics + "\n")
-	}
-	if w.A3Society != "" {
-		sb.WriteString("A3 社会结构：\n" + w.A3Society + "\n")
-	}
-	if w.A5Factions != "" {
-		sb.WriteString("A5 势力：\n" + w.A5Factions + "\n")
+		sb.WriteString("A2 世界规则：\n" + w.A2Physics + "\n")
 	}
 	if w.A6GoalChain != "" {
-		sb.WriteString("A6 主角目标链（驱动主角行动）：\n" + w.A6GoalChain + "\n")
+		sb.WriteString("A6 主角目标链：\n" + w.A6GoalChain + "\n")
 	}
 	if w.A7PowerSys != "" {
-		sb.WriteString("A7 能力成长体系（金手指节奏规划用）：\n" + w.A7PowerSys + "\n")
+		sb.WriteString("A7 能力成长体系：\n" + w.A7PowerSys + "\n")
 	}
 	if w.A8Villain != "" {
-		sb.WriteString("A8 反派行动线（反派要持续施压）：\n" + w.A8Villain + "\n")
+		sb.WriteString("A8 反派行动线：\n" + w.A8Villain + "\n")
 	}
-	if w.B1Secrets != "" {
-		sb.WriteString("B1 世界秘密（绝不泄露给角色）：\n" + w.B1Secrets + "\n")
+	if w.A9GoldenFinger != "" {
+		sb.WriteString("A9 金手指设计（规划段落时安排金手指展示五步：存在→用法→代价→实战→升级）：\n" + w.A9GoldenFinger + "\n")
+	}
+	if w.A10PayoffRhythm != "" {
+		sb.WriteString("A10 爽点循环规划（段落规划必须含爽点节奏：四类交替+密度控制+憋放结合）：\n" + w.A10PayoffRhythm + "\n")
+	}
+	if w.A11MapProgression != "" {
+		sb.WriteString("A11 地图阶梯（段落规划配合地图阶段：当前地图的爽点周期是否该收尾、是否该切新地图）：\n" + w.A11MapProgression + "\n")
+	}
+	if w.A12FaceSlapCycle != "" {
+		sb.WriteString("A12 打脸周期表（段落规划安排打脸周期：被压迫→打脸→展示，别一直憋也别一直打）：\n" + w.A12FaceSlapCycle + "\n")
 	}
 	if w.B3ArcPlan != "" {
-		sb.WriteString("B3 全书弧线建议（导演意图）：\n" + w.B3ArcPlan + "\n")
+		sb.WriteString("B3 弧线建议：\n" + w.B3ArcPlan + "\n")
 	}
 	if w.B4Foreshadows != "" {
-		sb.WriteString("B4 伏笔清单（规划段落时推进/回收）：\n" + w.B4Foreshadows + "\n")
+		sb.WriteString("B4 伏笔清单：\n" + w.B4Foreshadows + "\n")
 	}
-	sb.WriteString(w.ForTone())
 	return sb.String()
 }
 
-// ForEventAgent 事件 Agent 视角：A + 事件类型池 + 事件谱（本世界弹药库）
+// ForEventAgent 事件 Agent 视角：A + 事件类型池 + 事件谱 + 网文DNA（本世界弹药库）
 func (w *Worldbook) ForEventAgent() string {
 	var sb strings.Builder
 	sb.WriteString("【世界背景与事件类型】\n")
@@ -398,17 +401,25 @@ func (w *Worldbook) ForEventAgent() string {
 	if w.A2Physics != "" {
 		sb.WriteString("A2 世界规则：\n" + w.A2Physics + "\n")
 	}
+	if w.A9GoldenFinger != "" {
+		sb.WriteString("A9 金手指设计（事件里要让金手指有存在感：展示/用法/代价/实战/升级，按当前阶段安排对应节奏）：\n" + w.A9GoldenFinger + "\n")
+	}
+	if w.A10PayoffRhythm != "" {
+		sb.WriteString("A10 爽点循环规划（事件要配合爽点节奏：连憋几天后必须安排释放，四类爽点交替别单一）：\n" + w.A10PayoffRhythm + "\n")
+	}
+	if w.A12FaceSlapCycle != "" {
+		sb.WriteString("A12 打脸周期表（有人看不起主角→主角碾压→围观震惊，按周期安排打脸事件）：\n" + w.A12FaceSlapCycle + "\n")
+	}
 	if w.B2EventPool != "" {
 		sb.WriteString("B2 事件类型池（你的弹药库）：\n" + w.B2EventPool + "\n")
 	}
 	if w.B5EventPool != "" {
 		sb.WriteString("B5 本世界事件谱（优先从这里挑事件，落到本世界的具体样子）：\n" + w.B5EventPool + "\n")
 	}
-	sb.WriteString(w.ForTone())
 	return sb.String()
 }
 
-// ForNovelist 小说化 Agent 视角：A + 伏笔 + 事件谱 + 叙事约束
+// ForNovelist 小说化 Agent 视角：A + 伏笔 + 事件谱 + 叙事约束 + 网文DNA
 func (w *Worldbook) ForNovelist() string {
 	var sb strings.Builder
 	sb.WriteString("【小说化用设定】\n")
@@ -422,6 +433,18 @@ func (w *Worldbook) ForNovelist() string {
 	if w.A8Villain != "" {
 		sb.WriteString("A8 反派行动线（反派要主动出击，给主角持续压力，压迫→对抗→打脸）：\n" + w.A8Villain + "\n")
 	}
+	if w.A9GoldenFinger != "" {
+		sb.WriteString("A9 金手指设计（本章金手指处于展示五步的哪个阶段：存在/用法/代价/实战/升级——写到对应阶段的表现）：\n" + w.A9GoldenFinger + "\n")
+	}
+	if w.A10PayoffRhythm != "" {
+		sb.WriteString("A10 爽点循环规划（本章该不该给爽点、给哪类爽点：打脸/收获/装逼/情感——按节奏表来，别乱给也别憋太久）：\n" + w.A10PayoffRhythm + "\n")
+	}
+	if w.A11MapProgression != "" {
+		sb.WriteString("A11 地图阶梯（当前在哪个地图阶段、距离下一个地图还有多远——地图切换=新挑战+新资源+爽点重置）：\n" + w.A11MapProgression + "\n")
+	}
+	if w.A12FaceSlapCycle != "" {
+		sb.WriteString("A12 打脸周期表（本章是否处于「被压迫」期还是「打脸」期——打脸章要写足反差和围观反应）：\n" + w.A12FaceSlapCycle + "\n")
+	}
 	if w.B4Foreshadows != "" {
 		sb.WriteString("B4 伏笔清单（小说层编排）：\n" + w.B4Foreshadows + "\n")
 	}
@@ -431,7 +454,6 @@ func (w *Worldbook) ForNovelist() string {
 	if w.CNarrative != "" {
 		sb.WriteString("C 叙事约束：\n" + w.CNarrative + "\n")
 	}
-	sb.WriteString(w.ForTone())
 	return sb.String()
 }
 
@@ -450,7 +472,7 @@ func (w *Worldbook) ForWorldBrief() string {
 // WorldRule 物理规则（L1 真值）——GM 软规则裁决用
 func (w *Worldbook) WorldRule() string {
 	if w.A2Physics == "" {
-		return "现实都市规则；存在超自然现象但普通人看不见；身体有极限；法律与现实社会规则有效。"
+		return "世界的规则以世界书设定为准；生命有极限、资源有约束、行为有后果。"
 	}
 	return w.A2Physics
 }

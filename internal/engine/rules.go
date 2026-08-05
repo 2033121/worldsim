@@ -13,9 +13,9 @@ import (
 // 可无缝切换，Rules 结构不变。
 
 type Rules struct {
-	NumericRules  []NumericRule       `json:"numeric_rules"`
-	Preconditions []Precondition      `json:"preconditions"`
-	Permissions   []Permission        `json:"permissions"`
+	NumericRules  []NumericRule   `json:"numeric_rules"`
+	Preconditions []Precondition  `json:"preconditions"`
+	Permissions   []Permission    `json:"permissions"`
 	Enums         map[string][]string `json:"enums"`
 }
 
@@ -31,7 +31,7 @@ type Precondition struct {
 }
 
 type Requirement struct {
-	Path   string  `json:"path"`
+	Path   string `json:"path"`
 	Equals *string `json:"equals,omitempty"`
 	Gte    *string `json:"gte,omitempty"` // 引用 changes[i].value 或常量
 }
@@ -49,16 +49,13 @@ func DefaultRules() Rules {
 		NumericRules: []NumericRule{
 			{Path: "entities.*.money", Min: &zero},
 			{Path: "entities.*.health", Min: &zero, Max: &hundred},
-			// 资产表：键值动态生成，无法穷举资产名。用通用约束——资产值不允许为负。
-			// 路径通配暂时只覆盖常见资产名前缀；若需全量约束，见 rules.json 可手动补充细粒度规则。
-			{Path: "entities.*.assets.*", Min: &zero},
 		},
 		Permissions: []Permission{
-			{Actor: "npc_*", DenyPaths: []string{"entities.*.money", "entities.*.health", "entities.*.assets", "entities.*.body"}},
+			{Actor: "npc_*", DenyPaths: []string{"entities.*.money", "entities.*.health"}},
 			{Actor: "protagonist", DenyPaths: []string{"world_level.factions"}},
 		},
 		Enums: map[string][]string{
-			"entities.*.status": {"active", "departed", "dead"},
+			"entities.*.status": {"active", "departed", "dead", "mentioned"},
 		},
 	}
 }

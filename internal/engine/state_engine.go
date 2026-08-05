@@ -22,12 +22,12 @@ import (
 // ---------- 世界状态（§3.2 schema） ----------
 
 type WorldState struct {
-	Revision   int               `json:"revision"`
-	Day        int               `json:"day"`
-	Time       string            `json:"time"`
-	Weather    string            `json:"weather"`
-	WorldLevel WorldLevel        `json:"world_level"`
-	Entities   map[string]Entity `json:"entities"`
+	Revision   int                  `json:"revision"`
+	Day        int                  `json:"day"`
+	Time       string               `json:"time"`
+	Weather    string               `json:"weather"`
+	WorldLevel WorldLevel           `json:"world_level"`
+	Entities   map[string]Entity    `json:"entities"`
 }
 type WorldLevel struct {
 	GlobalEvents    []string            `json:"global_events"`
@@ -41,11 +41,11 @@ type WorldLevel struct {
 // Location 地点：有状态的场景对象（会随剧情变化）
 type Location struct {
 	Name     string `json:"name"`
-	Type     string `json:"type"`             // 城区/建筑/交通/自然/秘境
-	State    string `json:"state"`            // 正常/封禁/毁坏/繁荣/衰败/污染/新开放
-	Note     string `json:"note"`             // 地点记忆（发生过的变化）
+	Type     string `json:"type"`    // 城区/建筑/交通/自然/秘境
+	State    string `json:"state"`   // 正常/封禁/毁坏/繁荣/衰败/污染/新开放
+	Note     string `json:"note"`    // 地点记忆（发生过的变化）
 	Senses   string `json:"senses,omitempty"` // 感官档案：声音/气味/触感/光线（按本世界规则生成，写手写场景直接用）
-	SinceDay int    `json:"since_day"`        // 登记日
+	SinceDay int    `json:"since_day"` // 登记日
 }
 
 type TensionOverride struct {
@@ -56,38 +56,31 @@ type TensionOverride struct {
 }
 
 type Faction struct {
-	Visibility    string   `json:"visibility"` // public | hidden
-	Stance        string   `json:"stance"`
-	Power         float64  `json:"power"`
+	Visibility   string   `json:"visibility"` // public | hidden
+	Stance       string   `json:"stance"`
+	Power        float64  `json:"power"`
 	RecentActions []string `json:"recent_actions"`
-}
-
-// BodyState 身体/精神状态：通用多维键值 + 一段自由描述。
-// 维度字段由世界初始化/主角生成时按世界书动态定（都市=体力/精神/健康，修仙=灵力/伤势/心境…）；
-// 数值可被规则驱动，描述贴合剧情。
-type BodyState struct {
-	Vitals map[string]float64 `json:"vitals,omitempty"` // 多维数值，如 {"体力":80,"精神":70,"健康":90}
-	Desc   string             `json:"desc,omitempty"`   // 自由描述，如 "轻度感冒·通宵加班后很疲惫"
 }
 
 type Entity struct {
 	Location     string             `json:"location"`
-	Health       float64            `json:"health,omitempty"` // 兼容旧数据（保留，新世界用 Body）
-	Money        float64            `json:"money,omitempty"`  // 兼容旧数据（保留，新世界用 Assets）
-	Assets       map[string]float64 `json:"assets,omitempty"` // 资产表：通用键值，如 {"现金":3386,"功德值":1200,"存款":8000}
-	Body         BodyState          `json:"body,omitempty"`   // 身体状态：多维数值 + 描述
+	Health       float64            `json:"health"`
+	Money        float64            `json:"money"`
 	Job          string             `json:"job"`
 	Alive        bool               `json:"alive"`
 	Status       string             `json:"status"` // active | departed
 	Relationship map[string]float64 `json:"relationship,omitempty"`
 	Extra        map[string]any     `json:"extra,omitempty"`
+	// Stats 世界书驱动的动态属性集：属性名/单位/数值由世界书的力量体系与资源体系决定，
+	// 不属于引擎固定字段（引擎不硬编码任何具体属性名，只做通用读写）。
+	Stats map[string]any `json:"stats,omitempty"`
 }
 
 // ---------- 状态变更提案（§1.1） ----------
 
 type Change struct {
-	Path  string `json:"path"` // e.g. "entities.protagonist.money"
-	Op    string `json:"op"`   // add | set | del
+	Path  string `json:"path"`            // e.g. "entities.protagonist.money"
+	Op    string `json:"op"`              // add | set | del
 	Value any    `json:"value,omitempty"`
 }
 
@@ -398,7 +391,7 @@ func ApplyPath(s *WorldState, c Change) error {
 		name := parts[1]
 		ent, ok := s.Entities[name]
 		if !ok {
-			ent = Entity{Alive: true, Status: "active", Health: 100, Relationship: map[string]float64{}}
+			ent = Entity{Alive: true, Status: "active", Health: 100, Relationship: map[string]float64{}, Stats: map[string]any{}}
 		}
 		field := parts[2]
 		var err error
@@ -465,48 +458,20 @@ func setEntityField(e *Entity, field string, v any, op string, rest []string) er
 			}
 			e.Relationship[rest[0]] = f
 		}
-	case "assets":
-		// entities.{name}.assets.{资产名}=数值
-		if len(rest) == 0 {
-			return fmt.Errorf("assets 路径需指定资产名: %s", strings.Join(rest, "."))
-		}
-		if e.Assets == nil {
-			e.Assets = map[string]float64{}
-		}
-		f, ok := toFloat(v)
-		if !ok {
-			return fmt.Errorf("资产值需数值: %s", rest[0])
-		}
-		e.Assets[rest[0]] = f
-	case "body":
-		// entities.{name}.body.vitals.{维度}=数值 | entities.{name}.body.desc=文本
-		if len(rest) == 0 {
-			return fmt.Errorf("body 路径需指定 vitals/desc")
-		}
-		switch rest[0] {
-		case "vitals":
-			if len(rest) < 2 {
-				return fmt.Errorf("body.vitals 需指定维度")
-			}
-			if e.Body.Vitals == nil {
-				e.Body.Vitals = map[string]float64{}
-			}
-			f, ok := toFloat(v)
-			if !ok {
-				return fmt.Errorf("身体维度值需数值: %s", rest[1])
-			}
-			e.Body.Vitals[rest[1]] = f
-		case "desc":
-			if s, ok := v.(string); ok {
-				e.Body.Desc = s
-			}
-		}
 	case "extra":
 		if e.Extra == nil {
 			e.Extra = map[string]any{}
 		}
 		if len(rest) > 0 {
 			e.Extra[rest[0]] = v
+		}
+	case "stats":
+		// 世界书驱动的动态属性集：属性名由世界书决定，引擎只做通用读写
+		if e.Stats == nil {
+			e.Stats = map[string]any{}
+		}
+		if len(rest) > 0 {
+			e.Stats[rest[0]] = v
 		}
 	}
 	return nil
@@ -537,28 +502,22 @@ func addEntityField(e *Entity, field string, v any, rest []string) error {
 			}
 			e.Relationship[rest[0]] += f
 		}
-	case "assets":
-		if len(rest) == 0 {
-			return fmt.Errorf("assets 路径需指定资产名")
+	case "stats":
+		// 动态属性集：支持数值加减与整体设置
+		if e.Stats == nil {
+			e.Stats = map[string]any{}
 		}
-		f, ok := toFloat(v)
-		if !ok {
-			return fmt.Errorf("资产值需数值")
-		}
-		if e.Assets == nil {
-			e.Assets = map[string]float64{}
-		}
-		e.Assets[rest[0]] += f
-	case "body":
-		if len(rest) >= 2 && rest[0] == "vitals" {
+		if len(rest) > 0 {
+			key := rest[0]
+			cur, ok := toFloat(e.Stats[key])
+			if !ok {
+				cur = 0
+			}
 			f, ok := toFloat(v)
 			if !ok {
-				return fmt.Errorf("身体维度值需数值")
+				return fmt.Errorf("stats.%s 需数值", key)
 			}
-			if e.Body.Vitals == nil {
-				e.Body.Vitals = map[string]float64{}
-			}
-			e.Body.Vitals[rest[1]] += f
+			e.Stats[key] = cur + f
 		}
 	}
 	return nil
@@ -699,17 +658,9 @@ func getFloat(s *WorldState, path string) (float64, bool) {
 				return ent.Health, true
 			case "money":
 				return ent.Money, true
-			case "assets":
-				// entities.{name}.assets.{资产名}
-				if len(parts) >= 4 && ent.Assets != nil {
-					v, ok := ent.Assets[parts[3]]
-					return v, ok
-				}
-			case "body":
-				// entities.{name}.body.vitals.{维度}
-				if len(parts) >= 5 && parts[3] == "vitals" && ent.Body.Vitals != nil {
-					v, ok := ent.Body.Vitals[parts[4]]
-					return v, ok
+			case "stats":
+				if len(parts) >= 4 {
+					return toFloat(ent.Stats[parts[3]])
 				}
 			}
 		}

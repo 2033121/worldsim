@@ -8,7 +8,7 @@ import (
 
 // ---------- Token 省钱：状态精简（LLM 只需核心字段，砍掉 extra 大档案/长记忆） ----------
 
-// slimEntities 精简实体：只保留决策所需字段（location/job/assets/body/status/关系值），
+// slimEntities 精简实体：只保留决策所需字段（location/job/money/status/关系值），
 // 丢弃 Extra（persona_sheet 人设卡、记忆等大字段——这些按需单独注入）
 func slimEntities(ents map[string]engine.Entity) map[string]any {
 	out := map[string]any{}
@@ -16,22 +16,17 @@ func slimEntities(ents map[string]engine.Entity) map[string]any {
 		if e.Status == "departed" {
 			continue
 		}
-		// 兼容：新结构给了 assets/body 就用新的；否则回退到旧 money/health
 		entry := map[string]any{
 			"location": e.Location,
 			"job":      e.Job,
+			"money":    e.Money,
+			"health":   e.Health,
 			"status":   e.Status,
 			"rel":      e.Relationship,
 		}
-		if len(e.Assets) > 0 {
-			entry["assets"] = e.Assets
-		} else {
-			entry["money"] = e.Money
-		}
-		if len(e.Body.Vitals) > 0 || e.Body.Desc != "" {
-			entry["body"] = e.Body
-		} else {
-			entry["health"] = e.Health
+		// 世界书驱动的动态属性集（属性名随世界变化，引擎不预设）
+		if len(e.Stats) > 0 {
+			entry["stats"] = e.Stats
 		}
 		out[name] = entry
 	}
@@ -45,9 +40,9 @@ func compactState(st *engine.WorldState) string {
 		"day":     st.Day,
 		"weather": st.Weather,
 		"world_level": map[string]any{
-			"tension":       st.WorldLevel.Tension,
-			"factions":      st.WorldLevel.Factions,
-			"locations":     st.WorldLevel.Locations,
+			"tension":      st.WorldLevel.Tension,
+			"factions":     st.WorldLevel.Factions,
+			"locations":    st.WorldLevel.Locations,
 			"global_events": lastN(st.WorldLevel.GlobalEvents, 5),
 		},
 		"entities": slimEntities(st.Entities),

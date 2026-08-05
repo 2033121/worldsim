@@ -43,18 +43,6 @@ func (c *LLMClient) CompleteTier(ctx context.Context, tier, system, user string)
 	// 每步 LLM 调用加 150s 硬超时：中转站偶发挂起时快速失败→上层 fallback，不卡死模拟循环
 	callCtx, cancel := context.WithTimeout(ctx, 150*time.Second)
 	defer cancel()
-	// 世界参考资料（用户上传附件）：视为本世界权威设定，追加进系统提示，所有 Agent 必须遵守
-	if strings.TrimSpace(c.WorldRefs) != "" {
-		system += "\n【世界参考资料（用户上传，视为本世界权威设定，剧情/设定必须严格遵循，不得与之矛盾）】\n" + strings.TrimSpace(c.WorldRefs)
-	}
-	// 已注册工具（如联网搜索）时走 function calling 往返；否则保持原同步路径
-	if c.Tools != nil && len(c.Tools.Schemas()) > 0 {
-		cfg := c.Cfg
-		if tier != "" && c.Cfg.TierModel(tier) != c.Cfg.Model {
-			cfg = c.Cfg.TieredConfig(tier)
-		}
-		return llm.CallAPITools(callCtx, cfg, system, []llm.Message{{Role: "user", Content: user}}, c.Tools, nil)
-	}
 	return llm.CallAPITierSync(callCtx, c.Cfg, tier, system, user)
 }
 
@@ -90,9 +78,9 @@ func WorldAdvanceLLM(ctx context.Context, c *LLMClient, st *engine.WorldState, e
 ` + worldCtx + `
 1. 输出严格 JSON，不要任何多余文字、markdown 代码块标记。
 2. 只输出状态变更提案（changes 数组），格式：
-{"changes":[{"path":"world_level.tension","op":"set","value":0.3},{"path":"world_level.global_events","op":"add","value":"..."},{"path":"entities.主角名.location","op":"set","value":"..."}],"reason":"..."}
-3. 可用路径：world_level.tension(0~1)、world_level.weather(晴/多云/雨/暴雨/雾/雪)、world_level.global_events(追加)、world_level.factions.*、entities.{名字}.{location/job/status/relationship.{npc}}、entities.{名字}.assets.{资产名}、entities.{名字}.body.vitals.{维度}、entities.{名字}.body.desc
-   —— 重要：entities 路径必须带字段（如 entities.主角名.location），禁止只写 entities.主角名；路径里不要有空格。
+{"changes":[{"path":"world_level.tension","op":"set","value":<0~1数值>},{"path":"world_level.global_events","op":"add","value":"<事件描述>"},{"path":"entities.<角色名>.location","op":"set","value":"<新位置>"}],"reason":"..."}
+3. 可用路径：world_level.tension(0~1)、world_level.weather(晴/多云/雨/暴雨/雾/雪)、world_level.global_events(追加)、world_level.factions.*、entities.{名字}.{location/money/health/job/status/relationship.{npc}/stats.{属性名}}
+   —— 重要：entities 路径必须带字段（如 entities.主角名.location），禁止只写 entities.主角名；路径里不要有空格；stats 属性名以状态中列出的为准。
 4. 保持世界内在一致：张力随事件演化；推进要符合世界书规则；可以按 B3 弧线建议引导事件走向，但不要直接替主角决定行动。
 5. 未回收伏笔必须有"持续存在感"：不能写没、不能自行了结——它们是待回收的坑，世界推进要让它们继续存在甚至酝酿。
 6. 当前剧情段落的目标/反派/爽点要配合：世界推进为段落服务，别把段落的张力写泄了。` + WorldBuildingSkills()
@@ -121,7 +109,7 @@ func WorldAdvanceLLM(ctx context.Context, c *LLMClient, st *engine.WorldState, e
 
 // TimeSkipLLM 时间过渡生成器：平淡期快进时生成"浓缩过渡段"（网文式时间跳跃）
 // 时间跳跃 ≠ 无事发生：带时间标记 + 变化/积累/细节 + 伏笔持续感 + 生活切片
-// 返回：过渡段文本 + 建议跳过天数（**由 LLM 按世界时间尺度自由决定：都市跳天~月，修仙跳月~年~十年，末世跳天**）
+// 返回：过渡段文本 + 建议跳过天数（**由 LLM 按世界时间尺度自由决定**）
 func TimeSkipLLM(ctx context.Context, c *LLMClient, st *engine.WorldState, heroName string, lastEvents string, openForeshadows string, wb *worldbook.Worldbook) (string, int) {
 	ctx = llm.WithSpan(ctx, "时间过渡")
 	fallback := fmt.Sprintf("接下来的日子，%s照常活着，但有些东西在暗处一点点变化。", heroName)
@@ -138,9 +126,9 @@ func TimeSkipLLM(ctx context.Context, c *LLMClient, st *engine.WorldState, heroN
 【跳过N天】
 过渡段文本
 规则：
-1. 【跳过N天】里的 N 由你按**这个世界的时间尺度**决定——从下方"世界背景"判断这个世界的节奏（修仙世界：炼气期以月~年计、筑基期以年~十年计、闭关一次可以跳过数年；都市世界：天~月；末世世界：天~周）。**不要被"天"这个单位束缚**：该跳几年就写几千天（365×年数），该跳半年就写180。跳多久的唯一标准是"这个世界的人，这段时间会怎么过"。
+1. 【跳过N天】里的 N 由你按**这个世界的时间尺度**决定——从下方"世界背景"判断这个世界的节奏（世界观的时间流速：按天/按月/按年运转，由世界设定决定）。**不要被"天"这个单位束缚**：该跳几年就写几千天（365×年数），该跳半年就写180。跳多久的唯一标准是"这个世界的人，这段时间会怎么过"。
 2. 过渡段文本 2~4 句话，必须带时间标记（"接下来几天/这一月/这三载/闭关的第五个年头"），和【跳过N天】一致。
-3. **时间跳跃不是"无事发生"**：写这段时间里的变化、积累、细节、习惯、心理——投了多少简历、攒了多少灵石、炉火烧废了几炉丹、每晚摸一遍没拆的信封、某条线索越来越近。用生活切片/细节堆出"日子在过，事在积累，世界在变"。
+3. **时间跳跃不是"无事发生"**：写这段时间里的变化、积累、细节、习惯、心理——投出的简历有没有回音、攒下的资源有多少、日复一日的修行/劳作有什么进展、某条线索越来越近。用生活切片/细节堆出"日子在过，事在积累，世界在变"。
 4. 未回收伏笔要有"持续存在感"（那件放不下的事/没拆的信/某人的话/某个地方该再去探），为后面回收蓄力。
 5. 结尾可以埋一句"不对劲"的钩子（一切如常里有一点异样），但不要展开成完整事件。
 6. 禁止写"风平浪静""啥都没发生""平淡的一天"这类空话——平淡里也要有细节。
@@ -186,8 +174,8 @@ func GMAgentLLM(ctx context.Context, c *LLMClient, st *engine.WorldState, wb *wo
 	}
 	heroJSON, _ := json.MarshalIndent(slimEntities(st.Entities), "", "  ")
 	system := `你是这方世界的"总导演"（GM/CEO）。你不是每天造事件，而是像导演一样**规划剧情段落**：一段一段地推进主线，让世界像一部网文那样发展——有目标、有反派压力、有伏笔推进、有爽点。
-输出严格 JSON，格式：
-{"arc_name":"段落名（一句话，如'第一次正面冲突'）","goal":"本段主角要达成什么目标（驱动他行动）","villain":"反派本段会做什么（压迫升级，谁在动）","foreshadow_focus":"本段要酝酿/推进/回收哪些伏笔","cycle":"本段的四步循环定位（目标→行动→收获→展示，标注当前段落处于哪一步）","payoff_type":"本段爽点类型（打脸/收获/装逼/情感，四类交替别单一）","payoff":"本段结束时给读者的爽点（打脸/收获/突破）","golden_finger_stage":"金手指当前阶段（存在/用法/代价/实战/升级）","energy_phase":"能量阶段（储备/压制/爆发/升华）","milestones":["3~5个关键节点：本段会发生的事件（冲突/发现/反转/升级）"],"time_hint":"本段覆盖多长（几天/几周/几个月）"}
+输出严格 JSON，格式（字段含义见括号，禁止额外文字）：
+{"arc_name":"段落名（一句话概括本段核心）","goal":"本段主角要达成什么目标（驱动他行动）","villain":"反派本段会做什么（压迫升级，谁在动）","foreshadow_focus":"本段要酝酿/推进/回收哪些伏笔","cycle":"本段的四步循环定位（目标→行动→收获→展示，标注当前段落处于哪一步）","payoff_type":"本段爽点类型（打脸/收获/装逼/情感，四类交替别单一）","payoff":"本段结束时给读者的爽点（打脸/收获/突破）","golden_finger_stage":"金手指当前阶段（存在/用法/代价/实战/升级）","energy_phase":"能量阶段（储备/压制/爆发/升华）","milestones":["3~5个关键节点：本段会发生的事件（冲突/发现/反转/升级）"],"time_hint":"本段覆盖多长（几天/几周/几个月）"}
 规则：
 1. 参考下方世界背景、未回收伏笔、主角状态、已发生事件——规划要有连续性：接住已有伏笔和人物关系，别凭空开新线。
 2. 一个段落 = 网文的一个"情节单元"（3~5个关键节点），段落之间用伏笔和反派行动衔接。
@@ -234,14 +222,14 @@ func DriftAgentLLM(ctx context.Context, c *LLMClient, st *engine.WorldState, her
 	heroJSON, _ := json.MarshalIndent(slimEntities(st.Entities), "", "  ")
 	system := `你是世界模拟器的"铺垫写手"。戏剧事件之间的平淡期，由你捕捉值得写进小说的"暗流"——不是事件，是变化、积累、伏笔在暗地里滋长。
 输出严格 JSON 数组，格式：
-[{"type":"foreshadow_growth|env_change|character_micro|ability_seed|relation_drift","title":"简短标题","content":"2~3句可写进小说的铺垫细节","days":1}]
+[{"type":"foreshadow_growth|env_change|character_micro|ability_seed|relation_drift","title":"简短标题","content":"2~3句可写进小说的铺垫细节","days":<1~5整数>}]
 规则：
 1. type 含义：
-   · foreshadow_growth 伏笔滋长：某个未回收伏笔的变化（主角放不下的那件事越来越近/某件信物有了异样/某人那句话总在脑子里转）
-   · env_change 环境渐变：周围环境的细微变化（天气/光线/常去的地方有什么变了/街上风声紧了）
-   · character_micro 人物微动：NPC 的细微异常（常碰面的人今天没出现/某人的话风变了/有人在附近站了很久）
+   · foreshadow_growth 伏笔滋长：某个未回收伏笔出现新变化（线索更近一步/旧物出现异样/某句话反复浮现）
+   · env_change 环境渐变：周围环境的细微变化（天气/光线/常去之处的异样/氛围变紧）
+   · character_micro 人物微动：NPC 的细微异常（常碰面的人没出现/话风改变/有人驻足张望）
    · ability_seed 能力暗育：主角能力在暗地里发育（身体/感知出现细微变化，他还说不清）
-   · relation_drift 关系漂移：人物关系的微妙变化（某人多聊了两句/递东西的手顿了顿）
+   · relation_drift 关系漂移：人物关系的微妙变化（多聊了两句/递东西的手顿了顿）
 2. **铺垫是"慢慢攒"的**：每一条都要和前面的铺垫/事件有连续性（上次的异样→这次更明显了），为将来的爆发蓄力。
 3. content 要有"可写性"：具体、有画面、能直接放进小说里当一个细节/一句心理，禁止空话（"一切如常"）。
 4. 返回 1~2 条即可，宁缺毋滥；今天真没有任何可写的暗流，返回空数组 []。
@@ -284,33 +272,36 @@ func EventGenLLM(ctx context.Context, c *LLMClient, st *engine.WorldState, wb *w
 0. 世界背景与事件类型（严格遵守）：
 ` + worldCtx + `
 1. 输出严格 JSON 数组，格式：
-[{"id":"ev-001-1","type":"daily|conflict|wonder|romance|opportunity|crisis|revelation|luck|disaster|quest|mystery|rival|milestone|windfall|slice","title":"...","location":"本世界地点（从世界背景里取）","severity":0.1,"frame":"遭遇场景描述（不含NPC具体言行）","first_actor":"protagonist|npc_某角色名","npcs":["某角色名"],"new_characters":[{"name":"新角色名","gender":"女","identity":"...","persona":"一句话人设","location":"出场地点","role_hint":"love_interest|important_npc|rival|minor_npc|temporary_npc"}],"rel_effect":"感情/关系影响说明","foreshadow":"伏笔名","resolve_foreshadow":"伏笔名","next_events":[{"title":"后续事件标题","frame":"后续事件框架"}],"options":["...","..."]}]
+[{"id":"ev-<天>-<序号>","type":"daily|conflict|wonder|romance|opportunity|crisis|revelation|luck|disaster|quest|mystery|rival|milestone|windfall|slice","title":"...","location":"本世界地点（从世界背景里取）","severity":<0~1数值>,"frame":"遭遇场景描述（不含NPC具体言行）","first_actor":"protagonist|npc_某角色名","npcs":["某角色名"],"new_characters":[{"name":"新角色名","gender":"女","identity":"...","persona":"一句话人设","location":"出场地点","role_hint":"love_interest|important_npc|rival|minor_npc|temporary_npc","tier":"core|support|walkon"}],"rel_effect":"感情/关系影响说明","foreshadow":"伏笔名","resolve_foreshadow":"伏笔名","next_events":[{"title":"后续事件标题","frame":"后续事件框架"}],"options":["...","..."]}]
 2. severity 0~1：日常0.1-0.3、冲突0.4-0.6、奇遇/重大/感情进展0.7-0.9（0.75以上会触发用户抉择）；**slice（生活切片）0.2-0.4**
 3. frame 只写"遭遇框架"（场景/氛围/人物出现），NPC 具体说出口的话由 NPC Agent 实时生成
 4. 生成 1-3 个事件，类型尽量多样；与主角当前处境相关（钱少就少消费场景）；优先选用事件类型池里的设定，避免凭空造新元素。
    **宁精勿滥**：只有今天有"值得展开的事"才生成事件——冲突、奇遇、机会、危机、感情进展、真相线索、伏笔推进、爽点、反派行动，至少占一样。如果今天确实风平浪静、没有任何戏剧价值的事，直接返回空数组 []（系统会自动快进时间，不浪费篇幅）。**严禁为了凑数生成"平淡的一天""无事发生"这类水事件。**
 5. 事件若涉及常驻NPC（世界背景/世界书里的角色），必须在 npcs 数组里列出，并把 first_actor 设为该 NPC（如"npc_角色名"）——这样会触发 NPC 自主对话。
-6. **新角色（这版要生成"像真人世界一样丰富"的配角，不再是只有女主/反派的"空舞台"）**：
-   · 一个真实的网文世界里配角很多，只是出场频率不同。生成新角色时按"金字塔"分配 role_hint：
-     - love_interest（潜在女主）/ important_npc（重要配角）/ rival（对手）：**极少**，只有真正有长期剧情潜力的才设——这类角色会贯穿主线、频繁出场、有完整人设。
-     - minor_npc（普通配角）：**适量**——邻居/同事/常客/同门/摊主等，在主角生活圈里反复出现、偶尔互动，推动日常与人情（不必每个都发展成主线）。
-     - temporary_npc（临时龙套）：**最多**——只在本场现身的过路客（店员/路人/送货的/门卫/同席食客），出场一两次即退场，**不需要记忆、不需要完整人设**，只为让场景"像真有人在过日子"。
-   · 新角色首次登场才放 new_characters（已存在角色不放）；是否成为女主不由你决定，由互动自然演化——你只负责让TA登场。
+6. **新角色注册（配角分层，小说生态；这版要生成"像真人世界一样丰富"的配角，不再是只有女主/反派的"空舞台"）**：
+   · **任何人第一次登场都必须放 new_characters**（这是角色注册机制，永远保留）——包括主角遇见的新面孔、事件里的路人、突然出现的对手。
+   · 用 tier 给新角色分层（由你判断这个角色的叙事分量）：
+     - **core（核心配角）**：很可能与主角长期纠缠的人——潜在女主、重要对手、关键盟友、反复出现的对头。他们有完整人设+记忆，会持续互动。对应 role_hint：love_interest/important_npc/rival。
+     - **support（普通配角）**：会再出现几次但不占据主线的人——街坊、同僚、有过一次深谈的陌生人。有轻量档案。对应 role_hint：minor_npc。
+     - **walkon（龙套）**：只出场这一次就消失的路人——报信的、围观者、一面之缘的人。一句话人设即可，系统不会为他们建档案、占记忆，之后偶尔被提起。对应 role_hint：temporary_npc。
+   · 分层不是固定的：support 可能因剧情需要升级为 core（多次互动后），walkon 也可能被主角记住而升级——由后续事件自然演化。
+   · 是否成为女主不由你决定，由互动自然演化——你只负责让TA登场。
    · **复用已有配角**：今日事件里能用的角色优先从下方"当前角色名册"里挑（尤其重要配角要按剧情复用），别总造新名字；名册里标"已淡出"的配角只可偶尔提及，不要重新拉出来当主角戏。
-   · **背景人物晋升**：下方"背景人物池"里的人，主角通常只在生活里远远见过/听说过。当某个背景人物因剧情变得重要（卷入事件/缘分/成为关键线索），可把它放进 new_characters 晋升为正式配角（role_hint 按新定位填），由系统自动从背景池转正。
+   · **背景人物晋升**：下方"背景人物池"里的人，主角通常只在生活里远远见过/听说过。当某个背景人物因剧情变得重要（卷入事件/缘分/成为关键线索），可把它放进 new_characters 晋升为正式配角（tier/role_hint 按新定位填），由系统自动从背景池转正。
    · 新角色名字要贴合本世界文化（不要用别的世界的名字），性别/身份/人设一句到位。
-7. 感情/关系：当事件涉及已有关系的深化或破裂时（心动/告白/共度危机/误会/背叛/分离），用 rel_effect 说明，并把涉及角色放进 npcs。
-8. 网文节奏：事件要有戏剧性——爽点（打脸/收获/成长/危机解除）、悬念、转折；平淡日也要埋一点"不对劲"的钩子。重要事件可埋伏笔（foreshadow字段，一句话命名）或带后续事件（next_events，1-3天后发生，形成遭遇链）。
-9. 事件类型补充说明：
+7. 背景角色升级：世界背景/编年史里提过的"只闻其名不见其人"的角色（活在传闻里的名字），可以在合适的事件里**正式登场**——把 TA 放进 new_characters（tier 按叙事分量填），让背景人物走进主角生活。这是世界"活起来"的关键：背景不是静止的，人物可以随时走上前台。
+8. 感情/关系：当事件涉及已有关系的深化或破裂时（心动/告白/共度危机/误会/背叛/分离），用 rel_effect 说明，并把涉及角色放进 npcs。
+9. 网文节奏：事件要有戏剧性——爽点（打脸/收获/成长/危机解除）、悬念、转折；平淡日也要埋一点"不对劲"的钩子。重要事件可埋伏笔（foreshadow字段，一句话命名）或带后续事件（next_events，1-3天后发生，形成遭遇链）。
+10. 事件类型补充说明：
    · revelation：真相揭示（世界观深层设定浮出水面——结合下方"世界深层"）
-   · luck：幸运/意外（小概率事件：捡到钱/贵人相助/突如其来的惊喜或横祸，要"出乎意料"）
-   · disaster：天灾/危机（停电/暴雨/事故）
+   · luck：幸运/意外（小概率的好事或横祸，要"出乎意料"）
+   · disaster：天灾/危机（本世界可能发生的灾祸）
    · quest：委托/任务（NPC托付一件事）
    · mystery：奇案/谜团（怪事待解）
    · rival：对手交锋（竞争者/敌对面出现）
    · milestone：成长/突破（主角获得新能力/新身份/关键道具）
    · windfall：横财/机遇（意外之财、天降机会）
-   · slice：生活切片（日常琐事/偶遇/烟火气细节——**必须贴合本世界的生活质感**：都市=便利店夜班/夜市/凌晨醉汉，仙侠=宗门杂役/坊市/丹房，末世=营地/搜寻补给。severity 0.2-0.4，为小说提供"闲笔"和真实感，**不是水事件**——它要有具体的生活细节（味道/声音/小动作），让世界像真有人在过日子）
+   · slice：生活切片（日常琐事/偶遇/烟火气细节——**必须贴合本世界的生活质感**，从世界背景里取该世界的日常场景与细节；severity 0.2-0.4，为小说提供"闲笔"和真实感，**不是水事件**——它要有具体的生活细节（味道/声音/小动作），让世界像真有人在过日子）
 13. 事件质感铁律（网文方法论，来自真人编辑经验）：
    · 冲突要有类型：冲突四类型=目标冲突（都要一样东西）/观念冲突（认为对方错了）/资源冲突（抢资源）/情绪冲突（积怨爆发）——生成冲突事件时想清楚是哪类，冲突才真实不空洞
    · 钩子九连环：悬念/冲突/反差/危机/金手指/情感/猎奇/爽点/谜题——每天的事件里至少带一个"钩子类型"，让读者想追下去；平淡日也要埋"不对劲"的钩子
@@ -363,7 +354,7 @@ func EventGenLLM(ctx context.Context, c *LLMClient, st *engine.WorldState, wb *w
 
 // ---------- 主角 Agent（LLM）：三问决策法（§8.4） ----------
 
-const threeQuestionPrompt = `你是主角 {HERO}，生活在下方【你眼中的世界】所述的这个世界。请用"三问决策法"决定今天的行动（参考 Concordia）：
+const threeQuestionPrompt = `你是主角 {HERO}，生活在这个世界里。请用"三问决策法"决定今天的行动（参考 Concordia）：
 第一问：我是谁？（身份、性格、现状、手头资源）
 第二问：我看到了什么？（基于下方感知，判断局势与利害）
 第三问：我打算怎么做？（给出具体行动与意图）
@@ -371,12 +362,10 @@ const threeQuestionPrompt = `你是主角 {HERO}，生活在下方【你眼中�
 规则：
 1. 输出严格 JSON，格式：
 {"thinking":"三问的简要推理（内部想法，不对外）","action":"用一句话描述行动","changes":[{"path":"entities.{HERO}.location","op":"set","value":"..."},...],"reason":"行动理由"}
-2. changes 只写你作为主角能影响的状态：自己的 location/job/relationship（对NPC的观感）、assets 资产表（entities.{HERO}.assets.{资产名}）、body 身体状态（entities.{HERO}.body.vitals.{维度} 和 entities.{HERO}.body.desc）；禁止改 world_level.factions、他人 assets/body
+2. changes 只写你作为主角能影响的状态：自己的 location/money/health/job/stats（世界定义的个人属性）/relationship（对NPC的观感）；禁止改 world_level.factions、他人 money/health/stats
 3. 行动必须基于感知信息，不要全知（你看不到远处/他人内心）
 4. 限制性视角三不（网络小说默认视角）：**不描写你不知道的**（远处的事/别人的内心/未验证的信息一律不写不猜）、**不解释你没验证的**、**不预设别人能理解你的想法**——你的行动和思考只能基于你亲眼看到、亲耳听到、亲身感受到的东西
-5. 资产变更（消费/收入）用 op=add；例：买早餐扣现金 → {"path":"entities.{HERO}.assets.现金","op":"add","value":-8}
-6. 身体状态变更（受伤/劳累/恢复）用 op=add 改 body.vitals 对应维度，并同步更新 body.desc 描述当前状态
-7. 性格要把"你是谁"活出来：你的性格、身份、处境（见下方"你自己"）必须贯穿你的思考和行动——你是乐子人/上进/腹黑/热血/怂，就按这个性格去搞事、去行动，绝不当四平八稳的工具人。`
+5. money 变更（消费）用 op=add 加负值；stats 属性按下方状态里列出的属性名修改（加用 op=add，设用 op=set）`
 
 // ProtagonistDecideLLM 主角三问决策 → 行动提案（返回提案与三问推理文本）
 func ProtagonistDecideLLM(ctx context.Context, c *LLMClient, st *engine.WorldState, obs ObservationPacket, hero string, wb *worldbook.Worldbook, memories string) (*engine.Proposal, string, error) {
