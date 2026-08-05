@@ -23,8 +23,10 @@ import (
 
 	"worldsim/internal/config"
 	"worldsim/internal/engine"
+	"worldsim/internal/health"
 	"worldsim/internal/httpapi"
 	"worldsim/internal/llm"
+	"worldsim/internal/logx"
 	"worldsim/internal/novel"
 	"worldsim/internal/sim"
 	"worldsim/internal/sse"
@@ -49,6 +51,10 @@ func main() {
 	storysDir := filepath.Join(progDir, "storys")
 	os.MkdirAll(storysDir, 0755)
 
+	// ---------- 结构化日志（分级 + 文件持久化 + 按天轮转） ----------
+	lx := logx.Get(progDir)
+	lx.Info("系统", "WorldSim 启动，版本=%s 程序目录=%s", version, progDir)
+
 	// ---------- 世界模拟目录 ----------
 	worldDir := filepath.Join(progDir, "worlds")
 	os.MkdirAll(worldDir, 0755)
@@ -57,12 +63,12 @@ func main() {
 	apiCfgPath := filepath.Join(progDir, "api.json")
 	apiCfg, err := config.LoadAPIConfig(apiCfgPath)
 	if err != nil {
-		fmt.Printf(" [错误] 加载API配置失败: %v\n", err)
+		lx.Error("系统", "加载API配置失败: %v", err)
 		os.Exit(1)
 	}
 	llm.EnsureContextBudget(apiCfg)
 	if apiCfg.BaseURL == "" || apiCfg.Model == "" {
-		fmt.Println(" [系统] 检测到空白API配置，已自动生成 api.json（请在 Web UI 配置）")
+		lx.Warn("系统", "检测到空白API配置，已自动生成 api.json（请在 Web UI 配置）")
 	}
 
 	// ---------- 启动小说化服务（48090） ----------
@@ -74,15 +80,25 @@ func main() {
 		log.Fatalf("嵌入静态文件失败: %v", err)
 	}
 	go httpapi.StartWebServer(apiCfg, apiCfgPath, logger, storyPort, progDir, version, staticFS)
-	fmt.Printf(" [系统] 小说创作服务已启动: http://localhost%s\n", storyPort)
+	lx.Info("系统", "小说创作服务已启动: http://localhost%s", storyPort)
 
 	// ---------- 启动世界模拟服务（48091） ----------
 	go startWorldServer(worldDir, apiCfg)
-	fmt.Printf(" [系统] 世界模拟服务已启动: http://localhost%s\n", worldPort)
+	lx.Info("系统", "世界模拟服务已启动: http://localhost%s", worldPort)
 
-	fmt.Printf(" [系统] 程序目录: %s\n", progDir)
-	fmt.Printf(" [系统] 小说项目目录: %s\n", storysDir)
-	fmt.Printf(" [系统] 世界模拟目录: %s\n", worldDir)
+	// ---------- 运行检测 + 自动修复 ----------
+	hc := health.New(progDir)
+	// 注入自动修复处理器：LLM 连续失败时输出修复建议（保持简单，后续可扩展为模型降级切换）
+	health.SetAutoHealHandler(func(reason string) string {
+		lx.Warn("自愈", "执行自动修复：%s", reason)
+		return "已记录修复动作；建议检查中转站限流或切换模型（api.json）"
+	})
+	hc.Start()
+	lx.Info("系统", "运行检测已启动: /api/health、/api/logs、heartbeat.json")
+
+	lx.Info("系统", "程序目录: %s", progDir)
+	lx.Info("系统", "小说项目目录: %s", storysDir)
+	lx.Info("系统", "世界模拟目录: %s", worldDir)
 
 	select {} // 阻塞主协程
 }
@@ -161,6 +177,11 @@ func startWorldServer(worldDir string, apiCfg *config.APIConfig) {
 	mux.HandleFunc("GET /api/world/snapshots", ws.handleSnapshots)
 	mux.HandleFunc("POST /api/world/snapshot", ws.handleSnapshot)
 	mux.HandleFunc("POST /api/world/rewind", ws.handleRewind)
+
+	// 运行检测：健康检查 / 日志查看（后期检查与改进用）
+	hc := health.New(filepath.Dir(ws.baseDir)) // ws.baseDir=worlds目录，日志写 wsdata（上级）
+	mux.HandleFunc("GET /api/health", hc.HandleHealth)
+	mux.HandleFunc("GET /api/logs", hc.HandleLogs)
 
 	// WebUI 世界模拟面板（单文件前端）
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
@@ -299,6 +320,10 @@ func (ws *worldServer) handleLoopSet(w http.ResponseWriter, r *http.Request) {
 			ws.loopCancel = nil
 			ws.loopMu.Unlock()
 		}()
+		// 防空转：连续 dry-run（LLM 连不上导致事件生成失败走模板）计数
+		// 超过阈值自动回退到最近健康快照，避免"空转污染"世界（干跑模板事件破坏剧情）
+		consecDryRun := 0
+		const maxDryRunBeforeRewind = 5
 		for {
 			select {
 			case <-ctx.Done():
@@ -306,13 +331,34 @@ func (ws *worldServer) handleLoopSet(w http.ResponseWriter, r *http.Request) {
 			default:
 			}
 			if res, err := inst.sim.RunDay(ctx); err != nil {
-			// 单日失败不中断循环（中转站抖动/超时），但停一会儿再试
-			time.Sleep(1 * time.Second)
-			continue
-		} else {
-			inst.lastDay = res // 供前端"今日对话/事件"面板
-		}
-			inst.autoSnapshot() // 每30天自动存档（时间回退锚点）
+				// 单日失败不中断循环（中转站抖动/超时），但停一会儿再试
+				time.Sleep(1 * time.Second)
+				continue
+			} else {
+				inst.lastDay = res // 供前端"今日对话/事件"面板
+			}
+			inst.autoSnapshot() // 每7天自动存档（时间回退锚点）
+
+			// --- 防空转检测：事件生成是否走 dry-run ---
+			snap := logx.M().Snapshot()
+			// 检查本次 RunDay 是否 dry-run：用全局指标 last_sim_ok（最近一次 LLM 是否成功）
+			lastOK, _ := snap["last_sim_ok"].(bool)
+			llmCalls, _ := snap["llm_calls"].(int64)
+			if !lastOK && llmCalls > 0 {
+				consecDryRun++
+				if consecDryRun == 1 {
+					// 第一次失败：先存一个"风险前健康快照"，万一后面连不上，至少有干净锚点
+					inst.snapshotBeforeRisk("LLM抖动·风险前存档")
+				}
+				if consecDryRun >= maxDryRunBeforeRewind {
+					fmt.Printf(" [防空转] LLM 连续失败 %d 次，自动回退到最近健康快照（防止空转污染）\n", consecDryRun)
+					ws.autoRewindSafe(inst, "LLM连续失败自动回档")
+					consecDryRun = 0
+				}
+			} else {
+				consecDryRun = 0 // LLM 正常，重置计数
+			}
+
 			// 就绪度驱动：素材够了自动停，等用户看小说
 			if rdy, ok := inst.sim.Readiness()["ready"].(bool); ok && rdy {
 				return
@@ -347,15 +393,28 @@ func (ws *worldServer) handleLoopStatus(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// autoSnapshot 自动快照：每 30 天存一次（时间回退的锚点）
+// autoSnapshot 自动快照：每 7 天存一次（时间回退锚点）+ 手动存档
+// 频率提升：30 天太长，LLM 连不上空转几天后想回档会没有干净锚点
 func (w *worldInstance) autoSnapshot() {
 	if w.sim == nil {
 		return
 	}
-	if w.engine.State().Day%30 == 0 {
-		if _, err := w.sim.SaveSnapshot("自动·每30天"); err == nil {
-			fmt.Printf(" [快照] Day%d 自动存档（时间回退锚点）\n", w.engine.State().Day)
+	day := w.engine.State().Day
+	if day%7 == 0 {
+		if _, err := w.sim.SaveSnapshot(fmt.Sprintf("自动·每7天·Day%d", day)); err == nil {
+			fmt.Printf(" [快照] Day%d 自动存档（时间回退锚点）\n", day)
 		}
+	}
+}
+
+// snapshotBeforeRisk 在"可能出问题"前存一个健康快照：
+// LLM 连续失败（中转站抖动）时，把当前状态固化为可回退锚点——防止空转污染后无处可回
+func (w *worldInstance) snapshotBeforeRisk(reason string) {
+	if w.sim == nil {
+		return
+	}
+	if _, err := w.sim.SaveSnapshot(reason); err == nil {
+		fmt.Printf(" [快照] 风险前自动存档：%s（Day%d）\n", reason, w.engine.State().Day)
 	}
 }
 
@@ -386,6 +445,33 @@ func (ws *worldServer) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ws.writeJSON(w, 200, map[string]any{"ok": true, "snapshot": meta})
+}
+
+// autoRewindSafe 防空转自动回档：回退到最近健康快照（LLM 连不上时空转后恢复干净状态）
+// 回退后重建 Simulator + 刷新内存状态；若没有快照则只记录（无法回退）
+func (ws *worldServer) autoRewindSafe(inst *worldInstance, reason string) {
+	if inst == nil || inst.sim == nil {
+		return
+	}
+	// 回退到"当前 day 之前最近"的健康快照（不要回退到当天，当天可能已污染）
+	target := inst.engine.State().Day - 1
+	if target <= 0 {
+		target = 1
+	}
+	meta, err := inst.sim.RewindTo(target)
+	if err != nil {
+		fmt.Printf(" [防空转] 无可用健康快照可回退（%v），继续当前状态\n", err)
+		return
+	}
+	// 重建 Simulator + 刷新内存
+	if err := inst.engine.Load(filepath.Join(inst.dir, "world_state.json")); err != nil {
+		fmt.Printf(" [防空转] 回退后状态加载失败: %v\n", err)
+		return
+	}
+	inst.sim = sim.NewSimulator(inst.engine, inst.dir)
+	inst.heroName = inst.sim.HeroName()
+	inst.applyLLM()
+	fmt.Printf(" [防空转] 已自动回档到 Day%d（原因：%s）\n", meta.Day, reason)
 }
 
 // handleRewind POST /api/world/rewind — 时间回退到 ≤day 的最近快照（body: {"day":N}）
@@ -815,7 +901,7 @@ func (ws *worldServer) handleSimDay(w http.ResponseWriter, r *http.Request) {
 			ws.writeJSON(w, 500, map[string]string{"error": "模拟失败: " + err.Error()})
 			return
 		}
-		inst.autoSnapshot() // 每30天自动存档（时间回退锚点）
+		inst.autoSnapshot() // 每7天自动存档（时间回退锚点）+ 风险前存档
 		results = append(results, res)
 		inst.lastDay = res // 供前端"今日对话/事件"面板（页面刷新/定时刷新直接拉取）
 		if res.Paused {
