@@ -77,12 +77,23 @@ func (w *Writer) SetMaterialDir(dir string) { w.Material = LoadMaterialBank(dir)
 
 // ---------- 章节计划 ----------
 
-// PlanChapters 事件驱动分章：每章至少包含 DaysPerCh 天且 ≥2 个"戏剧日"（有真实事件/对话/抉择的天）
-// 平淡日（时间流逝）自动并入相邻章当背景——时间不再是分章主角，事件才是
-func (w *Writer) PlanChapters(chronicle []sim.ChronicleEntry, thinkings map[int]string) []ChapterPlan {
+// PlanChapters 事件驱动分章：优先由 LLM 按"事件序列"决策章节划分（哪几个事件合成一章），
+// 失败/未配置 LLM 时回退到启发式规则（按戏剧日+天数）。时间不再是分章主角，事件才是。
+func (w *Writer) PlanChapters(ctx context.Context, chronicle []sim.ChronicleEntry, thinkings map[int]string) []ChapterPlan {
 	if len(chronicle) == 0 {
 		return nil
 	}
+	// 有 LLM 配置则优先走 LLM 分章（按事件决策），失败/非法输出回退启发式
+	if w.APICfg != nil {
+		if plans := w.planChaptersLLM(ctx, chronicle, thinkings); len(plans) > 0 {
+			return plans
+		}
+	}
+	return w.planChaptersHeuristic(chronicle, thinkings)
+}
+
+// planChaptersHeuristic 启发式分章（回退方案）：每章至少包含 DaysPerCh 天且 ≥2 个"戏剧日"
+func (w *Writer) planChaptersHeuristic(chronicle []sim.ChronicleEntry, thinkings map[int]string) []ChapterPlan {
 	// 收集有记录的 day，排序
 	daySet := map[int]bool{}
 	for _, e := range chronicle {
@@ -143,6 +154,226 @@ func (w *Writer) PlanChapters(chronicle []sim.ChronicleEntry, thinkings map[int]
 		})
 	}
 	return plans
+}
+
+// chapterBreak JSON：LLM 输出的章节划分（每章一个连续天数区间，覆盖全部编年史）
+type chapterBreak struct {
+	Title    string `json:"title"`
+	DayStart int    `json:"day_start"`
+	DayEnd   int    `json:"day_end"`
+}
+
+// planChaptersLLM 由 LLM 按"事件序列"决策分章：给 LLM 看压缩后的逐日事件流，
+// 让它把"一个完整情节单元"合成一章，输出每章的天数区间与标题。返回空切片表示失败。
+func (w *Writer) planChaptersLLM(ctx context.Context, chronicle []sim.ChronicleEntry, thinkings map[int]string) []ChapterPlan {
+	ctx = llm.WithSpan(ctx, "LLM分章")
+	// 收集有记录的天，排序
+	daySet := map[int]bool{}
+	for _, e := range chronicle {
+		daySet[e.Day] = true
+	}
+	for d := range thinkings {
+		daySet[d] = true
+	}
+	var days []int
+	for d := range daySet {
+		days = append(days, d)
+	}
+	sort.Ints(days)
+	if len(days) == 0 {
+		return nil
+	}
+
+	// 把逐日事件压缩成"事件流"文本（平淡日标注，不占篇幅）
+	var sb strings.Builder
+	dayEvents := map[int][]string{}
+	for _, e := range chronicle {
+		t := strings.TrimSpace(e.Content)
+		if t == "" {
+			continue
+		}
+		// 只保留有叙事价值的事件/对话/观察，STATE 状态类跳过
+		if e.Kind == "STATE" {
+			continue
+		}
+		dayEvents[e.Day] = append(dayEvents[e.Day], t)
+	}
+	for _, d := range days {
+		es := dayEvents[d]
+		if th := strings.TrimSpace(thinkings[d]); th != "" {
+			es = append(es, "【主角内心】"+th)
+		}
+		if len(es) == 0 {
+			sb.WriteString(fmt.Sprintf("Day%d：（平淡日，时间流逝）\n", d))
+			continue
+		}
+		sb.WriteString(fmt.Sprintf("Day%d：%s\n", d, strings.Join(es, "；")))
+	}
+	eventFlow := sb.String()
+
+	system := `你是网文小说的"分章师"。你的任务不是写正文，而是拿到一段"逐日事件流"后，判断**哪些事件组成一个完整情节单元（一章）**，把事件流切成章节。
+分章原则：
+1. **按事件/情节分章，不是按天数分章**。一个完整的情节单元（起因→发展→冲突/转折→落点）应合成一章；新的章节应该从"新的事件、新的冲突、新的场景跳转、新的目标"开始。
+2. 平淡的过渡日（时间流逝）并入前后最近的情节章当背景，不要单独成章。
+3. 一章覆盖的天数区间必须连续，且所有章节的区间要**首尾相接、覆盖全部事件流**（不能漏天、不能重叠、不能留空）。
+4. 每章 1~6 个事件日为宜，最晚不超过 10 天；事件密集时一章 1~2 天，事件稀疏时一章可跨多天。
+5. 每章给一个 2~10 字的网文章节标题（要有悬念/冲突/画面感，禁止用"第几章""dayX"这类）。
+6. 全篇尽量 5~15 章（按事件量自然浮动，事件少就少切，事件多就多切）。
+输出严格 JSON，格式：
+{"chapters":[{"title":"章节标题","day_start":N,"day_end":M},...]}`
+	user := fmt.Sprintf("请把下面这段模拟事件流按情节单元分章。世界设定：\n%s\n\n事件流：\n%s\n\n请输出 chapters JSON。", w.worldContext(), eventFlow)
+
+	raw, err := llm.CallAPITierSync(ctx, w.APICfg, "fast", system, user)
+	if err != nil {
+		return nil
+	}
+	jsonStr := llm.ExtractJSON(raw)
+	if jsonStr == "" {
+		return nil
+	}
+	var out struct {
+		Chapters []chapterBreak `json:"chapters"`
+	}
+	if err := json.Unmarshal([]byte(jsonStr), &out); err != nil || len(out.Chapters) == 0 {
+		// 容错：偶尔 LLM 输出 {"title":..,"chapters":[...]} 多包一层
+		var alt struct {
+			Title    string `json:"title"`
+			Chapters []chapterBreak `json:"chapters"`
+		}
+		if json.Unmarshal([]byte(jsonStr), &alt) != nil || len(alt.Chapters) == 0 {
+			return nil
+		}
+		out.Chapters = alt.Chapters
+	}
+	// 校验并规整：区间必须连续有序、覆盖全部天数；非法则回退启发式
+	plans := w.normalizeChapterBreaks(chronicle, days, out.Chapters)
+	return plans
+}
+
+// normalizeChapterBreaks 把 LLM 给出的章节天数区间规整为合法 ChapterPlan。
+// 核心：把每个区间的起点当作"新章节断点"，只在有记录的天上切分——
+// 保证章节首尾相接、覆盖全部天数、不引入无记录天；平淡日（无记录）自动并入相邻章。
+func (w *Writer) normalizeChapterBreaks(chronicle []sim.ChronicleEntry, days []int, breaks []chapterBreak) []ChapterPlan {
+	if len(breaks) == 0 {
+		return nil
+	}
+	start, end := days[0], days[len(days)-1]
+	// 按 DayStart 排序，逐段处理重叠：若某区间起点落在上一区间覆盖范围内（重叠），
+	// 则并入上一章（不产生新断点），仅向后扩展覆盖范围。
+	type seg struct {
+		ds, de int
+		title  string
+	}
+	var segs []seg
+	for _, b := range breaks {
+		ds := b.DayStart
+		if ds < start {
+			ds = start
+		}
+		if ds > end {
+			ds = end
+		}
+		de := b.DayEnd
+		if de < ds {
+			de = ds
+		}
+		if de > end {
+			de = end
+		}
+		segs = append(segs, seg{ds: ds, de: de, title: b.Title})
+	}
+	sort.Slice(segs, func(i, j int) bool { return segs[i].ds < segs[j].ds })
+
+	// 生成断点（dedupe 重叠），标题挂断点
+	titleByStart := map[int]string{}
+	var points []int
+	lastEnd := -1
+	for _, s := range segs {
+		// 断点必须落在有记录的天上
+		nd := nextRecordedDay(days, s.ds)
+		if nd < 0 {
+			continue
+		}
+		if lastEnd >= 0 && nd <= lastEnd {
+			// 重叠：并入上一章，只扩展覆盖范围
+			if s.de > lastEnd {
+				lastEnd = s.de
+			}
+			continue
+		}
+		if _, ok := titleByStart[nd]; !ok {
+			titleByStart[nd] = s.title
+			points = append(points, nd)
+		}
+		if s.de > lastEnd {
+			lastEnd = s.de
+		}
+	}
+	// 确保首章起点是 days[0]（若 LLM 没从第一天开始）
+	if _, ok := titleByStart[start]; !ok {
+		titleByStart[start] = ""
+		if len(points) == 0 || points[0] != start {
+			points = append([]int{start}, points...)
+		}
+	}
+	sort.Ints(points)
+
+	// 按断点切分：每章 = [断点, 下一断点) 的有记录天
+	var plans []ChapterPlan
+	num := 1
+	for i := 0; i < len(points); i++ {
+		segLo := points[i]
+		segHi := end + 1
+		if i+1 < len(points) && points[i+1] > segLo {
+			segHi = points[i+1]
+		}
+		chunk := daysInRange(days, segLo, segHi)
+		if len(chunk) == 0 {
+			continue
+		}
+		title := titleByStart[segLo]
+		if strings.TrimSpace(title) == "" {
+			title = w.pickChapterTitle(chronicle, chunk)
+		}
+		plans = append(plans, ChapterPlan{
+			Num: num, Title: title,
+			DayStart: chunk[0], DayEnd: chunk[len(chunk)-1],
+			Days: chunk, Status: "pending",
+		})
+		num++
+	}
+	return plans
+}
+
+// nextRecordedDay 返回 days 中第一个 >= lo 的天；无则返回 -1
+func nextRecordedDay(days []int, lo int) int {
+	for _, d := range days {
+		if d >= lo {
+			return d
+		}
+	}
+	return -1
+}
+
+// daysInRange 返回 days 中满足 lo <= d < hi 的天（保序）
+func daysInRange(days []int, lo, hi int) []int {
+	var out []int
+	for _, d := range days {
+		if d >= lo && d < hi {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// worldContext 世界设定摘要（供分章/叙事规划注入）
+func (w *Writer) worldContext() string {
+	if w.WB != nil {
+		if c := w.WB.ForNovelist(); c != "" {
+			return c
+		}
+	}
+	return "（无世界书）"
 }
 
 // pickChapterTitle 从该章天数范围内的事件条目选标题

@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +31,7 @@ import (
 	"worldsim/internal/engine"
 	"worldsim/internal/httpapi"
 	"worldsim/internal/llm"
+	"worldsim/internal/logging"
 	"worldsim/internal/novel"
 	"worldsim/internal/prompt"
 	"worldsim/internal/research"
@@ -66,6 +68,17 @@ func main() {
 	// ---------- 世界模拟目录 ----------
 	worldDir := filepath.Join(progDir, "worlds")
 	os.MkdirAll(worldDir, 0755)
+
+	// ---------- 完整日志系统（结构化持久化 + 内存检索 + HTTP API） ----------
+	// 落盘 <progDir>/logs/YYYY-MM-DD.jsonl，跨重启保留；全局单例供所有包使用。
+	logDir := filepath.Join(progDir, "logs")
+	if err := logging.Init(logDir); err != nil {
+		fmt.Printf(" [警告] 初始化日志系统失败: %v\n", err)
+	} else {
+		fmt.Printf(" [系统] 日志系统已就绪: %s\n", logDir)
+	}
+	defer logging.Close()
+	logging.Info("server", "WorldSim 服务启动", map[string]any{"prog_dir": progDir, "version": version})
 
 	// ---------- LLM 用量历史（全局，跨重启，落盘 <progDir>/llm_stats/） ----------
 	if err := llm.InitStatsStore(filepath.Join(progDir, "llm_stats")); err != nil {
@@ -272,6 +285,10 @@ func startWorldServer(worldDir string, apiCfg *config.APIConfig, ra *research.Ag
 	mux.HandleFunc("GET /api/world/snapshots", ws.handleSnapshots)
 	mux.HandleFunc("POST /api/world/snapshot", ws.handleSnapshot)
 	mux.HandleFunc("POST /api/world/rewind", ws.handleRewind)
+
+	// 完整日志系统：查询 / 统计
+	mux.HandleFunc("GET /api/logs", ws.handleLogs)
+	mux.HandleFunc("GET /api/logs/stats", ws.handleLogsStats)
 
 	// WebUI 世界模拟面板（构建产物，embed 进二进制）
 	wsWebFS, subErr := fs.Sub(wsWeb, "wsweb")
@@ -516,6 +533,7 @@ func (ws *worldServer) handleLoopSet(w http.ResponseWriter, r *http.Request) {
 				ws.loopConsecFail++
 				cFail := ws.loopConsecFail
 				ws.loopMu.Unlock()
+				logging.ErrorW(inst.name, "loop", fmt.Sprintf("Day%d 模拟失败(%v)，连续第 %d 次（自动重试）", inst.engine.State().Day, err, cFail), map[string]any{"day": inst.engine.State().Day, "error": err.Error(), "consec_fail": cFail})
 				if ws.heal != nil && cFail == 1 {
 					ws.heal.Heartbeat("warn",
 						fmt.Sprintf("「%s」Day%d 模拟失败(%v)，连续第 %d 次（自动重试）", inst.name, inst.engine.State().Day, err, cFail))
@@ -527,6 +545,7 @@ func (ws *worldServer) handleLoopSet(w http.ResponseWriter, r *http.Request) {
 				ws.loopConsecFail = 0
 				ws.loopMu.Unlock()
 				inst.lastDay = res // 供前端"今日对话/事件"面板
+				logging.InfoW(inst.name, "loop", fmt.Sprintf("Day%d 完成（mode=%s，事件%d）", res.Day, res.Mode, len(res.Events)), map[string]any{"day": res.Day, "mode": res.Mode, "events": len(res.Events)})
 				if ws.heal != nil {
 					ws.heal.Heartbeat("info",
 						fmt.Sprintf("「%s」Day%d 完成（mode=%s，事件%d）", inst.name, res.Day, res.Mode, len(res.Events)))
@@ -544,6 +563,7 @@ func (ws *worldServer) handleLoopSet(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 	ws.writeJSON(w, 200, map[string]any{"ok": true, "running": true, "target_day": ws.loopTarget, "world": ws.loopWorld})
+	logging.InfoW(inst.name, "loop", fmt.Sprintf("后台模拟循环启动，目标 Day%d", ws.loopTarget), map[string]any{"target_day": ws.loopTarget})
 }
 
 // handleLoopStatus GET /api/world/loop — 循环状态（前端开关/进度条用）
@@ -645,12 +665,41 @@ func (ws *worldServer) handleRewind(w http.ResponseWriter, r *http.Request) {
 	inst.sim = sim.NewSimulator(inst.engine, inst.dir)
 	inst.heroName = inst.sim.HeroName()
 	inst.applyLLM()
+	logging.InfoW(inst.name, "rewind", fmt.Sprintf("世界回退到 Day%d (rev%d)", meta.Day, meta.Revision), map[string]any{"day": meta.Day, "revision": meta.Revision, "reason": meta.Reason})
 	fmt.Printf(" [回退] 「%s」已回退到 Day%d（rev%d，快照：%s）\n", inst.name, meta.Day, meta.Revision, meta.Reason)
 	ws.writeJSON(w, 200, map[string]any{
 		"ok": true, "rewound_to": meta.Day, "revision": meta.Revision,
 		"reason": meta.Reason, "snapshot": meta,
 		"hint": "已回退到该时间点，可重新启动循环继续演化（会走出新分支）",
 	})
+}
+
+// handleLogs 查询日志（GET /api/logs?level=&cat=&world=&kw=&max=）
+// 返回最新在前的日志条目，便于排查问题。
+func (ws *worldServer) handleLogs(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	max := 200
+	if v := q.Get("max"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 10000 {
+			max = n
+		}
+	}
+	entries := logging.List(logging.Query{
+		Level: q.Get("level"),
+		Cat:   q.Get("cat"),
+		World: q.Get("world"),
+		Kw:    q.Get("kw"),
+		Max:   max,
+	})
+	ws.writeJSON(w, 200, map[string]any{
+		"ok": true, "count": len(entries), "entries": entries,
+	})
+}
+
+// handleLogsStats 日志统计（GET /api/logs/stats）按级别/分类聚合
+func (ws *worldServer) handleLogsStats(w http.ResponseWriter, r *http.Request) {
+	stats := logging.Counts()
+	ws.writeJSON(w, 200, map[string]any{"ok": true, "stats": stats})
 }
 
 // inst 返回当前世界实例（无则报错）
@@ -1303,6 +1352,7 @@ func (ws *worldServer) handleInit(w http.ResponseWriter, r *http.Request) {
 	}
 	inst.applyLLM() // 自动启用 LLM（api.json 配置有效时）——init 后模拟立即走真实 Agent
 	inst.created = true
+	logging.InfoW(inst.name, "init", fmt.Sprintf("世界初始化完成：主角=%s，Day1，实体=%d", hero, len(inst.engine.State().Entities)), map[string]any{"protagonist": hero, "entities": len(inst.engine.State().Entities)})
 	ws.writeJSON(w, 200, map[string]any{
 		"ok":          true,
 		"world":       req.WorldName,
@@ -1629,8 +1679,10 @@ func (ws *worldServer) handleWorldCreate(w http.ResponseWriter, r *http.Request)
 				_ = os.WriteFile(filepath.Join(ws.baseDir, "..", "worldbooks", name+".md"), []byte(wbText), 0644)
 				wbName = name
 				fmt.Printf(" [世界模拟] 世界书已生成（主题包：%s）：%s\n", req.Theme, name)
+				logging.Info(logging.CatWorldCreate, fmt.Sprintf("世界书已生成（主题包：%s）：%s", req.Theme, name), map[string]any{"theme": req.Theme, "worldbook": name, "world": name})
 			} else {
 				fmt.Printf(" [世界模拟] 世界书生成失败（3次重试后），回退模板\n")
+				logging.Error(logging.CatWorldCreate, "世界书生成失败（3次重试后），回退模板", map[string]any{"theme": req.Theme, "world": name})
 			}
 		}
 	}
@@ -1665,8 +1717,10 @@ func (ws *worldServer) handleWorldCreate(w http.ResponseWriter, r *http.Request)
 				_ = os.WriteFile(filepath.Join(ws.baseDir, "..", "worldbooks", name+".md"), []byte(wbText), 0644)
 				wbName = name
 				fmt.Printf(" [世界模拟] 世界书已生成（研究结果引导）：%s\n", name)
+				logging.Info(logging.CatWorldCreate, fmt.Sprintf("世界书已生成（研究引导）：%s", name), map[string]any{"research_id": req.ResearchID, "worldbook": name, "world": name})
 			} else {
 				fmt.Printf(" [世界模拟] 世界书生成失败（研究结果引导，3次重试后）\n")
+				logging.Error(logging.CatWorldCreate, "世界书生成失败（研究引导，3次重试后）", map[string]any{"research_id": req.ResearchID, "world": name})
 			}
 		}
 	}
@@ -1681,6 +1735,7 @@ func (ws *worldServer) handleWorldCreate(w http.ResponseWriter, r *http.Request)
 	ws.worlds[name] = wi
 	ws.current = name // 创建后自动切换
 	fmt.Printf(" [世界模拟] 新世界已创建：%s\n", name)
+	logging.Info(logging.CatWorldCreate, fmt.Sprintf("新世界已创建：%s", name), map[string]any{"world": name, "worldbook": wbName, "theme": req.Theme, "research_id": req.ResearchID})
 	ws.writeJSON(w, 200, map[string]any{"ok": true, "world": name, "current": ws.current})
 }
 
@@ -1817,7 +1872,7 @@ func (ws *worldServer) handleNovelGenerate(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	plans := inst.novelW.PlanChapters(chronicle, thinkings)
+	plans := inst.novelW.PlanChapters(r.Context(), chronicle, thinkings)
 	if len(plans) == 0 {
 		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": "没有可写的章节"})
 		return
@@ -1943,7 +1998,7 @@ func (ws *worldServer) handleNovelList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	chronicle := inst.sim.Chronicle()
-	plans := inst.novelW.PlanChapters(chronicle, inst.sim.Thinkings())
+	plans := inst.novelW.PlanChapters(r.Context(), chronicle, inst.sim.Thinkings())
 	if plans == nil {
 		plans = []novel.ChapterPlan{}
 	}
