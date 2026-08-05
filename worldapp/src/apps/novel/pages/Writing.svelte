@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { api } from '../lib/api.js';
-  import { progress, taskRunning, streamingContent, streamingChapterIdx, selectedChapter, autoConfirm, addToast, confirmModal } from '../lib/stores.js';
+  import { progress, taskRunning, streamingContent, streamingChapterIdx, selectedChapter, autoConfirm, addToast, confirmModal, projectLanguage } from '../lib/stores.js';
   import { navigate } from '../lib/router.js';
   import { t } from '../lib/i18n/index.js';
   import { countProseUnits } from '../lib/proseUnits.js';
@@ -33,6 +33,21 @@
     } catch (err) {
       e.target.checked = $autoConfirm;
       addToast(err.message, 'error');
+    }
+  }
+
+  // 停止当前 AI 任务（生成/修订/润色/后处理等），复用后端 POST /api/task/stop 取消机制
+  let stoppingTask = false;
+  async function stopTask() {
+    if (stoppingTask) return;
+    stoppingTask = true;
+    try {
+      await api('POST', '/api/task/stop');
+      addToast($t('writing.toasts.stopping'), 'info');
+    } catch (err) {
+      if (err?.message) addToast(err.message, 'error');
+    } finally {
+      setTimeout(() => { stoppingTask = false; }, 800);
     }
   }
 
@@ -205,6 +220,7 @@
   $: chapterWordCount = ch?.word_count || (chapterContent ? countProseUnits(chapterContent) : 0);
   $: showTaskTokens = $taskRunning && isCurrent;
   $: totalWords = chapters.reduce((sum, c) => sum + (c.word_count || 0), 0);
+  $: bookComplete = chapters.length > 0 && chapters.every(c => c.status === 'accepted' && c.content_rev);
 
   $: foreshadows = p?.foreshadows || [];
   $: fsActive = foreshadows.filter(f => f.status === 'planted' || f.status === 'progressing');
@@ -426,6 +442,43 @@
       },
     });
   }
+
+  // —— 联网搜索素材（POST /api/search）——
+  let searchQuery = '';
+  let searchResults = [];
+  let searchLoading = false;
+  let searchError = '';
+  let searchSearched = false;
+
+  async function doSearch() {
+    const q = searchQuery.trim();
+    if (!q || searchLoading) return;
+    searchLoading = true;
+    searchError = '';
+    searchSearched = true;
+    try {
+      const res = await api('POST', '/api/search', {
+        query: q,
+        max: 5,
+        language: $projectLanguage === 'en' ? 'en-US' : 'zh-CN',
+      });
+      searchResults = res.results || [];
+    } catch (e) {
+      searchError = e.message;
+      searchResults = [];
+    } finally {
+      searchLoading = false;
+    }
+  }
+
+  async function copySearchResult(r) {
+    const text = `${r.title}\n${r.url}\n\n${r.content || ''}`.trim();
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      addToast($t('writing.search.copied'), 'success');
+    } catch (e) { addToast($t('writing.search.copyFailed'), 'error'); }
+  }
 </script>
 
 {#if !inWriting}
@@ -440,17 +493,17 @@
     <!-- 进度 -->
     <div class="card bg-base-200 shadow-sm">
       <div class="card-body p-4 gap-2">
-        <div class="flex items-center gap-3">
-          <h2 class="card-title text-base flex-1">{$t('writing.progress.title')}</h2>
-          <label class="flex items-center gap-1.5 cursor-pointer" title={$t('writing.progress.autoConfirmTip')}>
+        <div class="flex items-center gap-2 flex-wrap">
+          <h2 class="card-title text-base flex-1 min-w-[6rem]">{$t('writing.progress.title')}</h2>
+          <label class="flex items-center gap-1.5 cursor-pointer whitespace-nowrap" title={$t('writing.progress.autoConfirmTip')}>
             <input type="checkbox" class="toggle toggle-xs toggle-success" checked={$autoConfirm} on:change={toggleAutoConfirm} />
             <span class="text-xs text-base-content/60">{$t('writing.progress.autoConfirm')}</span>
           </label>
-          <span class="text-xs text-base-content/40">{$t('writing.progress.totalWords', { n: totalWords.toLocaleString() })}</span>
+          <span class="text-xs text-base-content/40 whitespace-nowrap">{$t('writing.progress.totalWords', { n: totalWords.toLocaleString() })}</span>
           {#if accepted >= 2}
-            <button class="btn btn-ghost btn-xs" on:click={smoothTransitions} disabled={$taskRunning} title={$t('writing.btn.smoothTransitions.tip')}>{$t('writing.btn.smoothTransitions')}</button>
+            <button class="btn btn-ghost btn-xs whitespace-nowrap" on:click={smoothTransitions} disabled={$taskRunning} title={$t('writing.btn.smoothTransitions.tip')}>{$t('writing.btn.smoothTransitions')}</button>
           {/if}
-          <button class="btn btn-ghost btn-xs" on:click={exportBook}>{$t('writing.btn.exportTxt')}</button>
+          <button class="btn btn-ghost btn-xs whitespace-nowrap" on:click={exportBook}>{$t('writing.btn.exportTxt')}</button>
         </div>
         <progress class="progress progress-primary w-full" value={pct} max="100"></progress>
         <div class="text-sm text-base-content/50">{$t('writing.progress.acceptedSummary', { pct, accepted, total })}</div>
@@ -458,9 +511,12 @@
     </div>
 
     {#if writingConflict}
-      <div class="card bg-error/10 border border-error/30 shadow-sm">
-        <div class="card-body p-4 gap-3">
-          <h3 class="font-semibold text-error">{$t('writing.conflict.title')}</h3>
+      <details class="card bg-error/10 border border-error/30 shadow-sm">
+        <summary class="cursor-pointer select-none px-4 py-3 flex items-center gap-2">
+          <span class="font-semibold text-error grow">{$t('writing.conflict.title')}</span>
+          <span class="text-xs text-base-content/50 truncate">{writingConflict.summary}</span>
+        </summary>
+        <div class="card-body p-4 gap-3 pt-0">
           <p class="text-sm">{$t('writing.conflict.summary')}：{writingConflict.summary}</p>
           {#if writingConflict.issues?.length}
             <div class="text-xs text-base-content/70">
@@ -475,50 +531,63 @@
           <div class="flex flex-wrap gap-2">
             {#each (writingConflict.suggested_actions || []) as action}
               {#if action.id === 'edit_outline'}
-                <button class="btn btn-warning btn-xs" disabled={$taskRunning} on:click={gotoOutlineForConflict}>{$t('writing.conflict.gotoOutline')}</button>
+                <button class="btn btn-warning btn-xs whitespace-nowrap" disabled={$taskRunning} on:click={gotoOutlineForConflict}>{$t('writing.conflict.gotoOutline')}</button>
               {:else if action.id === 'adjust_foreshadow'}
-                <button class="btn btn-warning btn-xs" disabled={$taskRunning} on:click={gotoForeshadows}>{$t('writing.conflict.gotoForeshadows')}</button>
+                <button class="btn btn-warning btn-xs whitespace-nowrap" disabled={$taskRunning} on:click={gotoForeshadows}>{$t('writing.conflict.gotoForeshadows')}</button>
               {:else if action.id === 'retry'}
-                <button class="btn btn-primary btn-xs" disabled={$taskRunning} on:click={() => resolveWritingConflict('retry')}>{$t('writing.conflict.retry')}</button>
+                <button class="btn btn-primary btn-xs whitespace-nowrap" disabled={$taskRunning} on:click={() => resolveWritingConflict('retry')}>{$t('writing.conflict.retry')}</button>
               {:else if action.id === 'force_review'}
-                <button class="btn btn-ghost btn-xs" disabled={$taskRunning} on:click={() => resolveWritingConflict('force_review')}>{$t('writing.conflict.forceReview')}</button>
+                <button class="btn btn-ghost btn-xs whitespace-nowrap" disabled={$taskRunning} on:click={() => resolveWritingConflict('force_review')}>{$t('writing.conflict.forceReview')}</button>
               {/if}
             {/each}
-            <button class="btn btn-ghost btn-xs" disabled={$taskRunning} on:click={() => resolveWritingConflict('dismiss')}>{$t('writing.conflict.dismiss')}</button>
+            <button class="btn btn-ghost btn-xs whitespace-nowrap" disabled={$taskRunning} on:click={() => resolveWritingConflict('dismiss')}>{$t('writing.conflict.dismiss')}</button>
           </div>
         </div>
-      </div>
+      </details>
     {:else if orphanWriting}
-      <div class="card bg-warning/10 border border-warning/30 shadow-sm">
-        <div class="card-body p-4 gap-3">
-          <h3 class="font-semibold text-warning">{$t('writing.orphan.title')}</h3>
+      <details class="card bg-warning/10 border border-warning/30 shadow-sm">
+        <summary class="cursor-pointer select-none px-4 py-3 flex items-center gap-2">
+          <span class="font-semibold text-warning grow">{$t('writing.orphan.title')}</span>
+        </summary>
+        <div class="card-body p-4 gap-3 pt-0">
           <p class="text-sm text-base-content/70">{$t('writing.orphan.hint')}</p>
           <div class="flex flex-wrap gap-2">
-            <button class="btn btn-primary btn-xs" disabled={$taskRunning} on:click={doGenerate}>{$t('writing.orphan.retry')}</button>
-            <button class="btn btn-ghost btn-xs" disabled={$taskRunning} on:click={() => resolveWritingConflict('force_review')}>{$t('writing.orphan.forceReview')}</button>
-            <button class="btn btn-warning btn-xs" disabled={$taskRunning} on:click={gotoOutlineForConflict}>{$t('writing.conflict.gotoOutline')}</button>
-            <button class="btn btn-warning btn-xs" disabled={$taskRunning} on:click={gotoForeshadows}>{$t('writing.conflict.gotoForeshadows')}</button>
+            <button class="btn btn-primary btn-xs whitespace-nowrap" disabled={$taskRunning} on:click={doGenerate}>{$t('writing.orphan.retry')}</button>
+            <button class="btn btn-ghost btn-xs whitespace-nowrap" disabled={$taskRunning} on:click={() => resolveWritingConflict('force_review')}>{$t('writing.orphan.forceReview')}</button>
+            <button class="btn btn-warning btn-xs whitespace-nowrap" disabled={$taskRunning} on:click={gotoOutlineForConflict}>{$t('writing.conflict.gotoOutline')}</button>
+            <button class="btn btn-warning btn-xs whitespace-nowrap" disabled={$taskRunning} on:click={gotoForeshadows}>{$t('writing.conflict.gotoForeshadows')}</button>
           </div>
         </div>
-      </div>
+      </details>
     {/if}
 
     {#if foreshadows.length > 0}
-      <div class="card bg-base-200 shadow-sm">
-        <div class="card-body p-4 gap-2">
-          <div class="flex items-center justify-between gap-2">
-            <h3 class="font-medium text-sm">{$t('writing.fs.title')}</h3>
-            <button class="btn btn-ghost btn-xs" on:click={() => navigate('foreshadows')}>{$t('writing.fs.goto')}</button>
-          </div>
-          <div class="flex flex-wrap gap-2 text-xs">
-            <span class="badge badge-ghost">{$t('writing.fs.total', { n: foreshadows.length })}</span>
-            <span class="badge badge-info badge-outline">{$t('writing.fs.active', { n: fsActive.length })}</span>
+      <details class="card bg-base-200 shadow-sm">
+        <summary class="cursor-pointer select-none px-4 py-3 flex items-center justify-between gap-2">
+          <span class="font-medium text-sm">{$t('writing.fs.title')}</span>
+          <span class="flex items-center gap-2">
+            <span class="badge badge-ghost badge-sm">{$t('writing.fs.total', { n: foreshadows.length })}</span>
             {#if fsOverdue.length > 0}
-              <span class="badge badge-error">{$t('writing.fs.overdue', { n: fsOverdue.length })}</span>
+              <span class="badge badge-error badge-sm">{$t('writing.fs.overdue', { n: fsOverdue.length })}</span>
             {/if}
             {#if fsNearTarget.length > 0}
-              <span class="badge badge-warning badge-outline">{$t('writing.fs.nearTarget', { n: fsNearTarget.length })}</span>
+              <span class="badge badge-warning badge-outline badge-sm">{$t('writing.fs.nearTarget', { n: fsNearTarget.length })}</span>
             {/if}
+          </span>
+        </summary>
+        <div class="card-body p-4 gap-2 pt-0">
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex flex-wrap gap-2 text-xs">
+              <span class="badge badge-ghost">{$t('writing.fs.total', { n: foreshadows.length })}</span>
+              <span class="badge badge-info badge-outline">{$t('writing.fs.active', { n: fsActive.length })}</span>
+              {#if fsOverdue.length > 0}
+                <span class="badge badge-error">{$t('writing.fs.overdue', { n: fsOverdue.length })}</span>
+              {/if}
+              {#if fsNearTarget.length > 0}
+                <span class="badge badge-warning badge-outline">{$t('writing.fs.nearTarget', { n: fsNearTarget.length })}</span>
+              {/if}
+            </div>
+            <button class="btn btn-ghost btn-xs whitespace-nowrap" on:click={() => navigate('foreshadows')}>{$t('writing.fs.goto')}</button>
           </div>
           {#if fsOverdue.length > 0}
             <p class="text-xs text-warning">{$t('writing.fs.overdueDetail', { names: fsOverdue.map(f => `#${f.id} ${f.name}`).join(', ') })}</p>
@@ -526,26 +595,85 @@
             <p class="text-xs text-base-content/50">{$t('writing.fs.nearDetail', { names: fsNearTarget.map(f => f.name).join(', ') })}</p>
           {/if}
         </div>
-      </div>
+      </details>
     {:else}
       <div class="card bg-base-200 shadow-sm">
         <div class="card-body p-4 flex items-center justify-between gap-2">
           <p class="text-sm text-base-content/50">{$t('writing.fs.none')}</p>
-          <button class="btn btn-ghost btn-xs" on:click={() => navigate('foreshadows')}>{$t('writing.fs.setup')}</button>
+          <button class="btn btn-ghost btn-xs whitespace-nowrap" on:click={() => navigate('foreshadows')}>{$t('writing.fs.setup')}</button>
         </div>
       </div>
     {/if}
 
-    <PostProcessPanel />
+    <!-- 联网搜索素材 -->
+    <details class="card bg-base-200 shadow-sm" open>
+      <summary class="cursor-pointer select-none px-4 py-3 flex items-center gap-2">
+        <span class="font-medium text-sm grow">{$t('writing.search.title')}</span>
+        <span class="text-xs text-base-content/40">{$t('writing.search.hint')}</span>
+      </summary>
+      <div class="card-body p-4 gap-3 pt-0">
+        <div class="flex gap-2">
+          <input
+            class="input input-sm w-full"
+            type="text"
+            bind:value={searchQuery}
+            placeholder={$t('writing.search.placeholder')}
+            on:keydown={(e) => { if (e.key === 'Enter') doSearch(); }}
+          />
+          <button class="btn btn-primary btn-sm whitespace-nowrap" on:click={doSearch} disabled={searchLoading || !searchQuery.trim()}>
+            {#if searchLoading}<span class="loading loading-spinner loading-xs"></span>{/if}
+            {$t('writing.search.run')}
+          </button>
+        </div>
+        {#if searchError}
+          <p class="text-sm text-error">{searchError}</p>
+        {:else if searchSearched && searchResults.length === 0}
+          <p class="text-sm text-base-content/50">{$t('writing.search.noResults')}</p>
+        {:else if !searchSearched}
+          <p class="text-sm text-base-content/40">{$t('writing.search.empty')}</p>
+        {/if}
+        {#if searchResults.length > 0}
+          <ul class="space-y-2">
+            {#each searchResults as r (r.url)}
+              <li class="bg-base-300 rounded p-3 space-y-1.5">
+                <div class="flex items-start justify-between gap-2">
+                  <a class="link link-primary text-sm font-medium line-clamp-2" href={r.url} target="_blank" rel="noopener noreferrer">{r.title || r.url}</a>
+                  <button class="btn btn-ghost btn-xs shrink-0" on:click={() => copySearchResult(r)} title={$t('writing.search.copy')}>📋 {$t('writing.search.copy')}</button>
+                </div>
+                {#if r.content}
+                  <p class="text-xs text-base-content/70 line-clamp-3 whitespace-pre-wrap">{r.content}</p>
+                {/if}
+                <div class="text-[11px] text-base-content/40 flex items-center gap-2">
+                  {#if r.engine}<span>{$t('writing.search.engine', { engine: r.engine })}</span>{/if}
+                  <a class="link link-hover link-secondary" href={r.url} target="_blank" rel="noopener noreferrer">{$t('writing.search.open')}</a>
+                </div>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </div>
+    </details>
+
+    {#if bookComplete}
+      <details class="bg-base-200 rounded-lg">
+        <summary class="cursor-pointer select-none px-4 py-3 flex items-center gap-2">
+          <span class="font-medium text-sm grow">{$t('pp.title')}</span>
+          <span class="text-xs text-base-content/40">展开/收起 ▾</span>
+        </summary>
+        <div class="px-2 pb-3">
+          <PostProcessPanel />
+        </div>
+      </details>
+    {/if}
 
     <!-- 章节区 -->
-    <div class="grid grid-cols-[230px_1fr] gap-3" style="min-height:400px">
+    <div class="grid grid-cols-[260px_1fr] gap-3" style="min-height:400px">
       <!-- 章节列表 -->
-      <div class="card bg-base-200 shadow-sm overflow-y-auto max-h-[calc(100vh-240px)]">
+      <div class="card bg-base-200 shadow-sm overflow-y-auto max-h-[calc(100vh-260px)]">
         <ul class="menu menu-sm p-0 w-full">
           {#each chapters as c, i}
             <li>
-              <button class="flex gap-2 items-center {$selectedChapter === i ? 'active' : ''}" on:click={() => selectChapter(i)}>
+              <button class="flex gap-2 items-center w-full min-w-0 text-left {$selectedChapter === i ? 'active' : ''}" on:click={() => selectChapter(i)}>
                 <span class="w-2 h-2 rounded-full shrink-0 {statusMeta[c.status]?.dot || ''}"></span>
                 <span class="text-base-content/50 w-6 shrink-0 text-right">{c.num}</span>
                 <span class="flex-1 text-left truncate text-sm">{c.title}</span>
@@ -614,7 +742,7 @@
                   </div>
                 {/if}
                 <!-- svelte-ignore a11y-no-static-element-interactions -->
-                <div bind:this={contentEl} class="bg-base-300 rounded-lg p-4 text-[15px] chapter-content reading-area max-h-[calc(100vh-360px)] min-h-[260px] overflow-y-auto"
+                <div bind:this={contentEl} class="bg-base-300 rounded-lg p-4 text-[15px] chapter-content reading-area max-h-[calc(100vh-260px)] min-h-[420px] overflow-y-auto"
                      on:mouseup={checkContentSelection}
                      on:scroll={hideQuotePopover}>
                   {#if isStreamingThis}
@@ -625,7 +753,7 @@
                       {#each chapterBlocks as b (b.id)}
                         <div class="group relative rounded hover:bg-base-100/40 -mx-2 px-2 py-0.5">
                           {#if editingBlockId === b.id}
-                            <textarea class="textarea textarea-sm w-full text-[15px] leading-relaxed" rows={Math.max(3, Math.ceil(b.text.length / 40))} bind:value={editingText} disabled={$taskRunning}></textarea>
+                            <textarea class="textarea textarea-sm w-full text-[15px] leading-relaxed min-h-28" rows={Math.max(4, Math.ceil(b.text.length / 40))} bind:value={editingText} disabled={$taskRunning}></textarea>
                             <div class="flex gap-2 justify-end mt-1">
                               <button class="btn btn-ghost btn-xs" on:click={cancelBlockOps}>{$t('common.cancel')}</button>
                               <button class="btn btn-primary btn-xs" on:click={saveBlockEdit} disabled={$taskRunning || !editingText.trim()}>{$t('common.save')}</button>
@@ -685,6 +813,11 @@
 
               <!-- 操作 -->
               <div class="flex gap-2 flex-wrap items-center mt-1">
+                {#if $taskRunning}
+                  <button class="btn btn-error btn-sm gap-1" on:click={stopTask} disabled={stoppingTask}>
+                    <span class="loading loading-spinner loading-xs"></span>{$t('writing.btn.stop')}
+                  </button>
+                {/if}
                 {#if ch.status === 'pending' && isCurrent}
                   <button class="btn btn-primary btn-sm" on:click={doGenerate} disabled={$taskRunning}>{$t('writing.btn.generate')}</button>
                 {/if}

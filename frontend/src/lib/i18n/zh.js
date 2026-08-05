@@ -24,6 +24,7 @@ export default {
   'nav.memory': '记忆',
   'nav.relations': '图谱',
   'nav.skills': '技能',
+  'nav.stats': 'Token统计',
 
   // Common
   'common.confirm': '确认',
@@ -565,6 +566,8 @@ export default {
   'writing.chapter.pendingCurrent': '本章尚未生成，点击下方「生成本章」开始创作',
   'writing.chapter.pendingOther': '本章尚未生成（按顺序写作，当前进行到第 {n} 章）',
   'writing.btn.generate': '✨ 生成本章',
+  'writing.toasts.stopping': '正在停止任务…',
+  'writing.btn.stop': '⏹ 停止生成',
   'writing.btn.confirm': '✓ 确认本章',
   'writing.btn.revise': '✏️ 修改本章',
   'writing.btn.polish': '✨ 去AI味',

@@ -1,12 +1,11 @@
 ---
 id: kc-flow-007
-name: 
+name: 章节写作SOP
 description: 
 category: flow
 lang: zh
 source: builtin
 ---
-
 # KC-FLOW-007 章节写作SOP
 
 ## 一、核心原则

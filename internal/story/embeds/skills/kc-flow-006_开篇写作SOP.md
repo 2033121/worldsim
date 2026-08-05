@@ -1,12 +1,11 @@
 ---
 id: kc-flow-006
-name: 
+name: 开篇写作SOP
 description: 
 category: flow
 lang: zh
 source: builtin
 ---
-
 # KC-FLOW-006 开篇写作SOP
 
 ## 一、核心原则

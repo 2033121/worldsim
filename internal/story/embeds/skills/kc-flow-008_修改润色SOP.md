@@ -1,12 +1,11 @@
 ---
 id: kc-flow-008
-name: 
+name: 修改润色SOP
 description: 
-category: flow
+category: polish
 lang: zh
 source: builtin
 ---
-
 # 修改润色SOP
 
 ## 一、核心原则：好文章是改出来的

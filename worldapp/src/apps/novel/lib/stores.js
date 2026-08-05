@@ -11,6 +11,9 @@ export const currentTaskName = writable(null);
 export const currentProject = writable(null);
 export const projects = writable([]);
 
+// 请求打开「从世界播种小说」面板（跨应用由世界 tab 触发）；{ world_id }
+export const openSeedNovel = writable(null);
+
 // Language of the currently loaded novel project (immutable per project).
 // Drives AI prompt language, generated prose language and built-in skill filter.
 export const projectLanguage = writable('zh');

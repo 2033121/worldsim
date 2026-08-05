@@ -23,6 +23,7 @@ export default {
   'nav.memory': 'Memory',
   'nav.relations': 'Relations',
   'nav.skills': 'Skills',
+  'nav.stats': 'Tokens',
 
   // Common
   'common.confirm': 'Confirm',
@@ -561,6 +562,8 @@ export default {
   'writing.chapter.pendingCurrent': 'Chapter not generated yet. Click "Generate chapter" below to start.',
   'writing.chapter.pendingOther': 'Chapter not generated yet (sequential writing; currently on chapter {n})',
   'writing.btn.generate': '✨ Generate chapter',
+  'writing.toasts.stopping': 'Stopping task...',
+  'writing.btn.stop': '⏹ Stop',
   'writing.btn.confirm': '✓ Confirm chapter',
   'writing.btn.revise': '✏️ Revise chapter',
   'writing.btn.polish': '✨ De-slop',

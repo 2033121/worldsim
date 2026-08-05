@@ -17,26 +17,34 @@ import (
 	"time"
 	"worldsim/internal/config"
 	"worldsim/internal/i18n"
+	"worldsim/internal/search"
 	"worldsim/internal/sse"
 	"worldsim/internal/story"
 )
 
 // StartWebServer wires all routes and blocks serving HTTP. staticFiles must
 // be rooted at the built frontend (index.html at its top level).
-func StartWebServer(apiCfg *config.APIConfig, apiCfgPath string, logger *sse.LogBroadcaster, port, progDir, version string, staticFiles fs.FS) {
+// searchProv 为可选的联网搜索后端（nil 则 /api/search 返回未启用）。
+func StartWebServer(apiCfg *config.APIConfig, apiCfgPath string, logger *sse.LogBroadcaster, port, progDir, version string, staticFiles fs.FS, searchProv search.Provider) {
 	h := NewHandlers(apiCfg, apiCfgPath, logger, progDir, version)
+	h.searchProv = searchProv
 
 	mux := http.NewServeMux()
 
 	// Project management endpoints
 	mux.HandleFunc("GET /api/projects", h.GetProjects)
 	mux.HandleFunc("POST /api/projects", h.PostProject)
+	mux.HandleFunc("POST /api/world/seed-novel", h.PostWorldSeedNovel)
 	mux.HandleFunc("GET /api/projects/current", h.GetProjectCurrent)
 	mux.HandleFunc("POST /api/projects/select", h.PostProjectSelect)
 	mux.HandleFunc("DELETE /api/projects/{name}", h.DeleteProject)
 
 	// Version endpoint (global, always available)
 	mux.HandleFunc("GET /api/version", h.GetVersion)
+
+	// LLM 全局用量统计（实时 + 历史）
+	mux.HandleFunc("GET /api/llm/stats", h.GetLLMStats)
+	mux.HandleFunc("GET /api/llm/stats/history", h.GetLLMStatsHistory)
 
 	// API config (global, always available)
 	mux.HandleFunc("GET /api/config/api", h.GetAPIConfig)
@@ -52,6 +60,9 @@ func StartWebServer(apiCfg *config.APIConfig, apiCfgPath string, logger *sse.Log
 	mux.HandleFunc("GET /api/progress", h.GetProgress)
 	mux.HandleFunc("DELETE /api/progress", h.DeleteProgress)
 	mux.HandleFunc("GET /api/status", h.GetStatus)
+
+	// 联网搜索（写作页搜素材）
+	mux.HandleFunc("POST /api/search", h.PostSearch)
 
 	mux.HandleFunc("POST /api/outline/generate", h.PostOutlineGenerate)
 	mux.HandleFunc("POST /api/outline/confirm", h.PostOutlineConfirm)

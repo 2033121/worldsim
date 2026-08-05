@@ -1,12 +1,11 @@
 ---
 id: kc-flow-009
-name: 
+name: 数据诊断与调整SOP
 description: 
 category: flow
 lang: zh
 source: builtin
 ---
-
 # KC-FLOW-009 数据诊断与调整SOP
 
 ## 一、核心原则

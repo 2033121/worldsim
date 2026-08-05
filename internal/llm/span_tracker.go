@@ -53,12 +53,40 @@ func newTokenTracker() *TokenTracker {
 	return &TokenTracker{spans: map[string]*SpanUsage{}, start: time.Now()}
 }
 
-// RecordSpan 记录一次调用的用量（在底层 HTTP 调用完成/失败处 defer 调用）
+// RecordSpan 记录一次调用的用量（在底层 HTTP 调用完成/失败处 defer 调用）。
+// 同时把消耗增量计入全局时间窗历史（RecordWindow：成功计 token，失败计 failures）。
 func RecordSpan(ctx context.Context, model string, usage *tokenUsage, promptRunes, completionRunes int, err error) {
 	span := spanFrom(ctx)
 	if span == "" {
 		return // 未标注环节的调用不统计（零侵入）
 	}
+	// 时间窗持久化：每次带 span 的调用都计入历史（成功计 token，失败计 failures）
+	var prompt, completion, cached int
+	if err == nil {
+		if usage != nil {
+			prompt = usage.PromptTokens
+			completion = usage.CompletionTokens
+			// 缓存命中只取一个字段（OpenAI 系: prompt_tokens_details.cached_tokens；
+			// DeepSeek 系: prompt_cache_hit_tokens）。同一模型响应通常只返回其一，
+			// 若两个都返回则取较大的那个，避免重复累计导致命中率 >100%。
+			if usage.PromptTokensDetails != nil && usage.PromptTokensDetails.CachedTokens > cached {
+				cached = usage.PromptTokensDetails.CachedTokens
+			}
+			if usage.PromptCacheHitTokens > cached {
+				cached = usage.PromptCacheHitTokens
+			}
+		} else {
+			// 无 usage 时按字数估算（与 TaskTokenUsage 口径一致）
+			prompt = EstimateTokensFromRunes(promptRunes)
+			completion = EstimateTokensFromRunes(completionRunes)
+		}
+	}
+	failures := 0
+	if err != nil {
+		failures = 1
+	}
+	RecordWindow(time.Now(), prompt, completion, cached, 1, failures)
+
 	spanTracker.mu.Lock()
 	defer spanTracker.mu.Unlock()
 	s := spanTracker.spans[span]
@@ -75,22 +103,11 @@ func RecordSpan(ctx context.Context, model string, usage *tokenUsage, promptRune
 		s.Prompt += usage.PromptTokens
 		s.Completion += usage.CompletionTokens
 		s.Total += usage.TotalTokens
-		// 缓存命中只取一个字段（OpenAI 系: prompt_tokens_details.cached_tokens；
-		// DeepSeek 系: prompt_cache_hit_tokens）。同一模型响应通常只返回其一，
-		// 若两个都返回则取较大的那个，避免重复累计导致命中率 >100%。
-		cached := 0
-		if usage.PromptTokensDetails != nil && usage.PromptTokensDetails.CachedTokens > cached {
-			cached = usage.PromptTokensDetails.CachedTokens
-		}
-		if usage.PromptCacheHitTokens > cached {
-			cached = usage.PromptCacheHitTokens
-		}
 		s.Cached += cached
 	} else {
-		// 无 usage 时按字数估算（与 TaskTokenUsage 口径一致）
-		s.Prompt += EstimateTokensFromRunes(promptRunes)
-		s.Completion += EstimateTokensFromRunes(completionRunes)
-		s.Total += s.Prompt + s.Completion
+		s.Prompt += prompt
+		s.Completion += completion
+		s.Total += prompt + completion
 	}
 }
 
@@ -151,4 +168,28 @@ func pct(a, b int) float64 {
 		return 100 // 命中率不可能超过100%（防御：估算token或模型异常数据）
 	}
 	return r
+}
+
+// StatsJSON 返回可 JSON 序列化的实时全局 LLM 用量快照，覆盖所有带 span 标注的调用
+// （世界模拟 sim / 小说 novel / 题材研究 research 等）。供 GET /api/llm/stats 使用。
+func StatsJSON() map[string]any {
+	summary := SpanSummary()
+	totalTokens, _ := summary["total_tokens"].(int)
+	return map[string]any{
+		"process_start": spanTracker.start.Format(time.RFC3339),
+		"summary":       summary,
+		"cache":         CacheStats(),
+		"estimate":      EstimateCost(totalTokens),
+	}
+}
+
+// EstimateCost 按累计 total_tokens 估算 API 费用（常量混合比率，仅作粗略参考）。
+// 比率：1 美元 ≈ 2M tokens（输入+输出混合，含折扣缓存），后续可改为从配置读取。
+func EstimateCost(totalTokens int) map[string]any {
+	const tokensPerDollar = 2_000_000
+	return map[string]any{
+		"tokens": totalTokens,
+		"usd":    float64(totalTokens) / tokensPerDollar,
+		"rate":   fmt.Sprintf("%d tokens/$", tokensPerDollar),
+	}
 }

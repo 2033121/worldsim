@@ -1,12 +1,11 @@
 ---
 id: kc-skill-236
-name: 
+name: 武器系统描写方法论
 description: 
 category: writing-craft
 lang: zh
 source: builtin
 ---
-
 # 武器系统描写方法论
 
 > **核心定位：** 从玄幻/仙侠/游戏武器体系中提炼小说武器系统描写方法论

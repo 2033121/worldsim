@@ -66,6 +66,11 @@ func main() {
 	worldDir := filepath.Join(progDir, "worlds")
 	os.MkdirAll(worldDir, 0755)
 
+	// ---------- LLM 用量历史（全局，跨重启，落盘 <progDir>/llm_stats/） ----------
+	if err := llm.InitStatsStore(filepath.Join(progDir, "llm_stats")); err != nil {
+		fmt.Printf(" [警告] 初始化 LLM 用量历史失败: %v\n", err)
+	}
+
 	// ---------- API 配置（小说化服务共用） ----------
 	apiCfgPath := filepath.Join(progDir, "api.json")
 	apiCfg, err := config.LoadAPIConfig(apiCfgPath)
@@ -95,7 +100,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("嵌入静态文件失败: %v", err)
 	}
-	go httpapi.StartWebServer(apiCfg, apiCfgPath, logger, storyPort, progDir, version, staticFS)
+	go httpapi.StartWebServer(apiCfg, apiCfgPath, logger, storyPort, progDir, version, staticFS, searchProvider)
 	fmt.Printf(" [系统] 小说创作服务已启动: http://localhost%s\n", storyPort)
 
 	// ---------- 启动世界模拟服务（48091） ----------
@@ -117,6 +122,9 @@ func main() {
 // 所有 LLMClient（小说/世界模拟）都会挂上 web_search 工具。
 var webSearchTools *llm.ToolRegistry
 
+// searchProvider 全局联网搜索后端（供 48090 的 /api/search 接口复用）。
+var searchProvider search.Provider
+
 // initSearchTools 从 baseDir/search.json 加载联网搜索配置并初始化工具注册表。
 // 文件不存在或未启用则静默跳过（不影响原有功能）。
 func initSearchTools(baseDir string) {
@@ -134,10 +142,19 @@ func initSearchTools(baseDir string) {
 		fmt.Printf(" ⚠️ [搜索] 后端初始化失败: %v\n", err)
 		return
 	}
+	searchProvider = prov
 	reg := llm.NewToolRegistry()
 	search.RegisterWebSearch(reg, prov, cfg.MaxResults)
 	webSearchTools = reg
-	fmt.Printf(" [搜索] 已启用 %s @ %s（最大 %d 条/次）\n", prov.Name(), cfg.SearxngURL, cfg.MaxResults)
+	// 日志：按 provider 显示对应地址
+	endpoint := cfg.SearxngURL
+	switch prov.Name() {
+	case "bing":
+		endpoint = "Bing API (内置)"
+	case "binghtml":
+		endpoint = "cn.bing.com 抓取 (内置)"
+	}
+	fmt.Printf(" [搜索] 已启用 %s @ %s（最大 %d 条/次）\n", prov.Name(), endpoint, cfg.MaxResults)
 }
 
 // newLLMClient 构造带（可选）联网搜索工具 + 世界参考资料注入的 LLMClient。
@@ -224,6 +241,10 @@ func startWorldServer(worldDir string, apiCfg *config.APIConfig, ra *research.Ag
 	// 系统状态（联网搜索是否启用等）
 	mux.HandleFunc("GET /api/system/status", ws.handleSystemStatus)
 
+	// LLM 全局用量统计（实时 + 历史；统一网关 48092 的 /api/* 也转发到这里）
+	mux.HandleFunc("GET /api/llm/stats", ws.handleLLMStats)
+	mux.HandleFunc("GET /api/llm/stats/history", ws.handleLLMStatsHistory)
+
 	// 控制台：主题包列表 / 世界书 / 伏笔 / 后台循环
 	mux.HandleFunc("GET /api/worldbooks/themes", ws.handleThemesList)
 	mux.HandleFunc("GET /api/world/worldbook", ws.handleGetWorldbook)
@@ -279,6 +300,9 @@ func startUnifiedServer(storyPort, worldPort string) {
 	// 小说服务：/api/novel/* → 48090（/api/novel/P → /api/P）
 	mux.Handle("/api/novel/", proxyNovel(storyURL))
 	mux.Handle("/api/novel", proxyNovel(storyURL))
+	// 世界→小说播种：从已模拟世界生成小说项目种子（由小说服务 48090 提供）
+	// 注意：/api/world/seed-novel 为更具体字面量，优先于下方 /api/world/ 前缀路由。
+	mux.Handle("/api/world/seed-novel", forwardProxy(storyURL))
 	// 世界服务：真实路径直连转发（不改路径）
 	mux.Handle("/api/world/", forwardProxy(worldURL))
 	mux.Handle("/api/world", forwardProxy(worldURL))
@@ -1567,6 +1591,20 @@ func (ws *worldServer) handleDecisionResolve(w http.ResponseWriter, r *http.Requ
 // GET /api/world/token_stats — 各环节 Token 用量总览（仿 langfuse：按环节聚合，观察"钱花在哪"）
 func (ws *worldServer) handleTokenStats(w http.ResponseWriter, r *http.Request) {
 	ws.writeJSON(w, 200, llm.SpanSummary())
+}
+
+// GET /api/llm/stats — 实时全局 LLM 用量总览（进程启动时间 + 各环节聚合 + 缓存 + 费用估算）
+func (ws *worldServer) handleLLMStats(w http.ResponseWriter, r *http.Request) {
+	ws.writeJSON(w, 200, llm.StatsJSON())
+}
+
+// GET /api/llm/stats/history — 按时间窗（hour|day）的 token 消耗历史
+func (ws *worldServer) handleLLMStatsHistory(w http.ResponseWriter, r *http.Request) {
+	win := r.URL.Query().Get("window")
+	if win != "hour" && win != "day" {
+		win = "hour"
+	}
+	ws.writeJSON(w, 200, map[string]any{"window": win, "records": llm.LoadHistory(win)})
 }
 
 func mustRead(p string) []byte {

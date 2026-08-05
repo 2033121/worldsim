@@ -243,7 +243,7 @@ func recoverChapterLengthBest(ctx context.Context, apiCfg *config.APIConfig, cfg
 	return adjusted, nil
 }
 
-func generateChapterContentWithLengthControl(ctx context.Context, apiCfg *config.APIConfig, cfg *config.Config, state *Progress, idx int, settings *ProjectSettings, extraWritingConstraints string, logger *sse.LogBroadcaster) (string, error) {
+func generateChapterContentWithLengthControl(ctx context.Context, apiCfg *config.APIConfig, cfg *config.Config, state *Progress, idx int, settings *ProjectSettings, extraWritingConstraints string, skills []Skill, logger *sse.LogBroadcaster) (string, error) {
 	snapshot := state.StoryConfigSnapshot
 	if snapshot == nil {
 		snapshot = &cfg.Story
@@ -260,7 +260,7 @@ func generateChapterContentWithLengthControl(ctx context.Context, apiCfg *config
 			return "", fmt.Errorf("任务已取消")
 		}
 		constraints := mergeWritingConstraints(extraWritingConstraints, lengthFeedback)
-		content := generateChapterContentStreamWithRetryLog(ctx, apiCfg, cfg, state, idx, settings, constraints, logger)
+		content := generateChapterContentStreamWithRetryLog(ctx, apiCfg, cfg, state, idx, settings, constraints, skills, logger)
 		if content == "" {
 			return "", fmt.Errorf("正文生成失败或被取消")
 		}

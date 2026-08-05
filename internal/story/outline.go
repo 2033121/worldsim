@@ -33,7 +33,7 @@ func parseOutlineResponse(rawResp string) (*OutlineResponse, error) {
 	return &resp, nil
 }
 
-func generateOutline(ctx context.Context, apiCfg *config.APIConfig, cfg *config.Config, settings *ProjectSettings, logger *sse.LogBroadcaster) (*OutlineResponse, error) {
+func generateOutline(ctx context.Context, apiCfg *config.APIConfig, cfg *config.Config, settings *ProjectSettings, skills []Skill, logger *sse.LogBroadcaster) (*OutlineResponse, error) {
 	chapterCountStr := fmt.Sprintf("%d", cfg.Story.ChapterCount)
 	targetWordsStr := fmt.Sprintf("%d", cfg.Story.TargetWordsPerChapter)
 	data := mergeOutlinePromptData(map[string]string{
@@ -52,7 +52,7 @@ func generateOutline(ctx context.Context, apiCfg *config.APIConfig, cfg *config.
 	var lastShort []int
 	for attempt := 0; attempt < outlineGenMaxAttempts; attempt++ {
 		userPrompt := finalizeOutlinePrompt(cfg.Prompts.OutlineGeneration,
-			config.RenderPrompt(cfg.Prompts.OutlineGeneration, data), cfg, settings)
+			config.RenderPrompt(cfg.Prompts.OutlineGeneration, data), cfg, settings, skills)
 		if attempt > 0 {
 			userPrompt += formatShortOutlineRetryFeedback(lastShort, minLen, cfg.Language)
 		}
@@ -95,7 +95,7 @@ func intSliceToStr(nums []int) []string {
 	return out
 }
 
-func generateOutlineChaptersOnly(ctx context.Context, apiCfg *config.APIConfig, cfg *config.Config, settings *ProjectSettings, template string, baseData map[string]string, logger *sse.LogBroadcaster) ([]OutlineChapter, error) {
+func generateOutlineChaptersOnly(ctx context.Context, apiCfg *config.APIConfig, cfg *config.Config, settings *ProjectSettings, template string, baseData map[string]string, skills []Skill, logger *sse.LogBroadcaster) ([]OutlineChapter, error) {
 	data := mergeOutlinePromptData(baseData, cfg, settings)
 	systemPrompt := i18n.SystemPromptFor(cfg.Language, "outline_editor_json")
 	minLen, _ := calcOutlineLengthRange(cfg.Story.TargetWordsPerChapter)
@@ -103,7 +103,7 @@ func generateOutlineChaptersOnly(ctx context.Context, apiCfg *config.APIConfig, 
 	var lastChapters []OutlineChapter
 	var lastShort []int
 	for attempt := 0; attempt < outlineGenMaxAttempts; attempt++ {
-		userPrompt := finalizeOutlinePrompt(template, config.RenderPrompt(template, data), cfg, settings)
+		userPrompt := finalizeOutlinePrompt(template, config.RenderPrompt(template, data), cfg, settings, skills)
 		if attempt > 0 {
 			userPrompt += formatShortOutlineRetryFeedback(lastShort, minLen, cfg.Language)
 		}
@@ -134,7 +134,7 @@ func generateOutlineChaptersOnly(ctx context.Context, apiCfg *config.APIConfig, 
 	return lastChapters, nil
 }
 
-func reviseOutline(ctx context.Context, apiCfg *config.APIConfig, cfg *config.Config, state *Progress, settings *ProjectSettings, userFeedback, progressPath, cfgPath string, logger *sse.LogBroadcaster) error {
+func reviseOutline(ctx context.Context, apiCfg *config.APIConfig, cfg *config.Config, state *Progress, settings *ProjectSettings, userFeedback, progressPath, cfgPath string, skills []Skill, logger *sse.LogBroadcaster) error {
 	lang := cfg.Language
 	en := i18n.NormalizeLanguage(lang) == i18n.LangEN
 
@@ -170,7 +170,7 @@ func reviseOutline(ctx context.Context, apiCfg *config.APIConfig, cfg *config.Co
 	var lastShort []int
 	for attempt := 0; attempt < outlineGenMaxAttempts; attempt++ {
 		userPrompt := finalizeOutlinePrompt(cfg.Prompts.OutlineRevision,
-			config.RenderPrompt(cfg.Prompts.OutlineRevision, data), cfg, settings)
+			config.RenderPrompt(cfg.Prompts.OutlineRevision, data), cfg, settings, skills)
 		if attempt > 0 {
 			userPrompt += formatShortOutlineRetryFeedback(lastShort, minLen, lang)
 		}
@@ -237,7 +237,7 @@ func cleanJSONResponse(s string) string {
 	return strings.TrimSpace(s)
 }
 
-func GenerateOutlineAction(ctx context.Context, apiCfg *config.APIConfig, cfg *config.Config, state *Progress, settings *ProjectSettings, progressPath, cfgPath string, logger *sse.LogBroadcaster) error {
+func GenerateOutlineAction(ctx context.Context, apiCfg *config.APIConfig, cfg *config.Config, state *Progress, settings *ProjectSettings, progressPath, cfgPath string, skills []Skill, logger *sse.LogBroadcaster) error {
 	if err := llm.ValidateConfig(apiCfg); err != nil {
 		return err
 	}
@@ -249,7 +249,7 @@ func GenerateOutlineAction(ctx context.Context, apiCfg *config.APIConfig, cfg *c
 
 	logger.StepInfo(1, 2, "正在调用 AI 生成大纲...")
 
-	outlineResp, err := generateOutline(ctx, apiCfg, cfg, settings, logger)
+	outlineResp, err := generateOutline(ctx, apiCfg, cfg, settings, skills, logger)
 	if err != nil {
 		return fmt.Errorf("生成大纲失败: %w", err)
 	}
@@ -283,10 +283,10 @@ func GenerateOutlineAction(ctx context.Context, apiCfg *config.APIConfig, cfg *c
 	return nil
 }
 
-func ReviseOutlineAction(ctx context.Context, apiCfg *config.APIConfig, cfg *config.Config, state *Progress, settings *ProjectSettings, progressPath, cfgPath, feedback string, logger *sse.LogBroadcaster) error {
+func ReviseOutlineAction(ctx context.Context, apiCfg *config.APIConfig, cfg *config.Config, state *Progress, settings *ProjectSettings, progressPath, cfgPath, feedback string, skills []Skill, logger *sse.LogBroadcaster) error {
 	logger.StepInfo(1, 2, "正在根据意见修订大纲...")
 
-	if err := reviseOutline(ctx, apiCfg, cfg, state, settings, feedback, progressPath, cfgPath, logger); err != nil {
+	if err := reviseOutline(ctx, apiCfg, cfg, state, settings, feedback, progressPath, cfgPath, skills, logger); err != nil {
 		return fmt.Errorf("修订大纲失败: %w", err)
 	}
 
@@ -342,7 +342,7 @@ func EditChapterOutline(state *Progress, chapterNum int, title, outline string) 
 // Continuation outline generation for imported / finished books.
 // The v3 import pipeline itself lives in importer.go.
 
-func GenerateContinuationOutline(ctx context.Context, apiCfg *config.APIConfig, cfg *config.Config, state *Progress, settings *ProjectSettings, newChapterCount int, progressPath string, logger *sse.LogBroadcaster) error {
+func GenerateContinuationOutline(ctx context.Context, apiCfg *config.APIConfig, cfg *config.Config, state *Progress, settings *ProjectSettings, newChapterCount int, progressPath string, skills []Skill, logger *sse.LogBroadcaster) error {
 	logger.StepInfo(1, 2, "正在构建已有章节上下文...")
 
 	lang := cfg.Language
@@ -377,7 +377,7 @@ func GenerateContinuationOutline(ctx context.Context, apiCfg *config.APIConfig, 
 		"ExistingOutline": existingOutline,
 		"NewChapterCount": fmt.Sprintf("%d", newChapterCount),
 		"StartNum":        fmt.Sprintf("%d", startNum),
-	}, logger)
+	}, skills, logger)
 	if err != nil {
 		return err
 	}

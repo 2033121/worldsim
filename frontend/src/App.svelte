@@ -14,10 +14,13 @@
   import Skills from './pages/Skills.svelte';
   import Foreshadows from './pages/Foreshadows.svelte';
   import Memory from './pages/Memory.svelte';
+  import TokenStats from './pages/TokenStats.svelte';
   import ChatPanel from './components/ChatPanel.svelte';
   import ConfirmModal from './components/ConfirmModal.svelte';
+  import SeedNovelPanel from './components/SeedNovelPanel.svelte';
 
   let chatPanel;
+  let seedPanel;
 
   let appVersion = '';
   let latestVersion = '';
@@ -86,6 +89,10 @@
   function toggleLocale() {
     setLocale($uiLocale === 'en' ? 'zh' : 'en');
   }
+
+  function openSeedPanel() {
+    if (seedPanel) seedPanel.show();
+  }
 </script>
 
 <div class="flex flex-col h-screen bg-base-300 text-base-content overflow-hidden">
@@ -128,6 +135,13 @@
     <span class="flex-1"></span>
     <button
       class="btn btn-ghost btn-xs gap-1"
+      on:click={openSeedPanel}
+      title="从已模拟世界生成小说项目"
+    >
+      🌱 从世界播种
+    </button>
+    <button
+      class="btn btn-ghost btn-xs gap-1"
       on:click={toggleLocale}
       title={$t('app.uiLang.label')}
     >
@@ -151,7 +165,8 @@
           ['foreshadows', '🔗', 'nav.foreshadows'],
           ['memory', '🧠', 'nav.memory'],
           ['relations', '🕸️', 'nav.relations'],
-          ['skills', '🧩', 'nav.skills']
+          ['skills', '🧩', 'nav.skills'],
+          ['stats', '📊', 'nav.stats']
         ] as [page, icon, labelKey]}
           <button
             class="btn btn-sm justify-start w-full gap-2 px-3 text-sm {$currentPage === page ? 'btn-primary font-medium' : 'btn-ghost'}"
@@ -178,6 +193,8 @@
           <Relations />
         {:else if $currentPage === 'skills'}
           <Skills />
+        {:else if $currentPage === 'stats'}
+          <TokenStats />
         {/if}
       </main>
 
@@ -198,4 +215,5 @@
   </div>
 
   <ConfirmModal />
+  <SeedNovelPanel bind:this={seedPanel} />
 </div>

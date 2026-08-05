@@ -1,9 +1,11 @@
 <script>
   import { currentPage, navigate } from './lib/router.js';
-  import { progress, taskRunning, contextPage, toastStore, currentProject, projectLanguage } from './lib/stores.js';
+  import { progress, taskRunning, contextPage, toastStore, currentProject, projectLanguage, openSeedNovel } from './lib/stores.js';
   import { connectSSE } from './lib/sse.js';
   import { api } from './lib/api.js';
   import { onMount } from 'svelte';
+  import { get } from 'svelte/store';
+  import { seedNovelRequest } from '../../lib/seedNovel.js';
   import { t, uiLocale, setLocale, applyDefaultLocale } from './lib/i18n/index.js';
   import TaskTokenBadge from './components/TaskTokenBadge.svelte';
   import Projects from './pages/Projects.svelte';
@@ -14,15 +16,34 @@
   import Skills from './pages/Skills.svelte';
   import Foreshadows from './pages/Foreshadows.svelte';
   import Memory from './pages/Memory.svelte';
+  import TokenStats from './pages/TokenStats.svelte';
   import ChatPanel from './components/ChatPanel.svelte';
   import ConfirmModal from './components/ConfirmModal.svelte';
+  import SeedNovelPanel from './components/SeedNovelPanel.svelte';
 
   let chatPanel;
+  let seedPanel;
+
+  function openSeedPanel(world_id = '') {
+    if (seedPanel) seedPanel.show(world_id);
+  }
 
   $: $contextPage = $currentPage;
 
+  // 世界 tab 发起的「据此生成小说」：挂载后打开播种面板并消费请求
+  $: if ($openSeedNovel && seedPanel) {
+    openSeedPanel($openSeedNovel.world_id);
+    openSeedNovel.set(null);
+  }
+
   onMount(async () => {
     connectSSE();
+    // 跨应用播种请求（世界 tab → 本 tab）
+    const req = get(seedNovelRequest);
+    if (req && req.world_id) {
+      openSeedNovel.set({ world_id: req.world_id });
+      seedNovelRequest.set(null);
+    }
     try {
       const cur = await api('GET', '/api/projects/current');
       if (cur.name) {
@@ -72,6 +93,9 @@
       {/if}
     {/if}
     <span class="flex-1"></span>
+    <button class="btn btn-ghost btn-xs gap-1" on:click={() => openSeedPanel()} title="从已模拟世界生成小说项目">
+      🌱 从世界播种
+    </button>
     <button class="btn btn-ghost btn-xs gap-1" on:click={toggleLocale} title={$t('app.uiLang.label')}>
       {$uiLocale === 'en' ? $t('app.uiLang.en') : $t('app.uiLang.zh')}
     </button>
@@ -89,7 +113,8 @@
           ['foreshadows', '🔗', 'nav.foreshadows'],
           ['memory', '🧠', 'nav.memory'],
           ['relations', '🕸️', 'nav.relations'],
-          ['skills', '🧩', 'nav.skills']
+          ['skills', '🧩', 'nav.skills'],
+          ['stats', '📊', 'nav.stats']
         ] as [page, icon, labelKey]}
           <button
             class="btn btn-sm justify-start w-full gap-2 px-3 text-sm {$currentPage === page ? 'btn-primary font-medium' : 'btn-ghost'}"
@@ -115,6 +140,8 @@
           <Relations />
         {:else if $currentPage === 'skills'}
           <Skills />
+        {:else if $currentPage === 'stats'}
+          <TokenStats />
         {/if}
       </main>
 
@@ -133,4 +160,5 @@
   </div>
 
   <ConfirmModal />
+  <SeedNovelPanel bind:this={seedPanel} />
 </div>

@@ -864,4 +864,22 @@ var messageCatalog = map[string]map[string]string{
 		LangZH: "进度已重置。",
 		LangEN: "Progress reset.",
 	},
+
+	// ---- 世界→小说播种（seed-novel） ----
+	"log.seed_novel_done": {
+		LangZH: "已从世界「%s」播种小说项目「%s」（%d 角色 / %d 世界观 / %d 开篇章节）",
+		LangEN: "Seeded novel project \"%s\" from world \"%s\" (%d characters / %d worldview / %d opening chapters)",
+	},
+	"world_id_required": {
+		LangZH: "缺少 world_id 字段",
+		LangEN: "world_id is required",
+	},
+	"world_not_found": {
+		LangZH: "世界不存在或无法读取: %s",
+		LangEN: "World not found or unreadable: %s",
+	},
+	"seed_novel_failed": {
+		LangZH: "世界播种小说失败: %s",
+		LangEN: "Failed to seed novel from world: %s",
+	},
 }

@@ -2,6 +2,8 @@
   import { onMount } from 'svelte';
   import { j } from '../lib/api.js';
   import { worlds, currentWorld, refreshAll, toast, worldState } from '../lib/stores.js';
+  import { seedNovelRequest } from '../../../lib/seedNovel.js';
+  import { openTab } from '../../../lib/browser.js';
 
   let searchEnabled = false;
 
@@ -9,6 +11,14 @@
     const d = await j('/api/system/status');
     if (d && typeof d.search_enabled === 'boolean') searchEnabled = d.search_enabled;
   });
+
+  // 据此生成小说：带上当前世界跳到小说应用播种面板
+  function seedNovelFromCurrent() {
+    const wid = $currentWorld;
+    if (!wid) { toast('请先选择世界', 'error'); return; }
+    seedNovelRequest.set({ world_id: wid, ts: Date.now() });
+    openTab('novel');
+  }
 
   async function selectWorld(name) {
     if (!name) return;
@@ -59,5 +69,8 @@
   {#if searchEnabled}
     <span class="badge badge-sm badge-success gap-1" title="联网搜索已启用">🔎 联网搜索</span>
   {/if}
+  <button class="btn btn-ghost btn-xs gap-1" on:click={seedNovelFromCurrent} title="把当前世界播种成小说项目，进入小说创作应用">
+    📖 据此生成小说
+  </button>
   <button class="btn btn-ghost btn-xs gap-1" on:click={refreshAll}>↻ 刷新</button>
 </div>

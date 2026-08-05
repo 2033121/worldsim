@@ -114,7 +114,7 @@ func formatExtraWritingConstraintsBlock(constraints, lang string) string {
 	return "【补充写作约束（事实核查冲突调和）】\n" + constraints
 }
 
-func GenerateChapterAction(ctx context.Context, apiCfg *config.APIConfig, cfg *config.Config, state *Progress, progressPath string, settings *ProjectSettings, logger *sse.LogBroadcaster) error {
+func GenerateChapterAction(ctx context.Context, apiCfg *config.APIConfig, cfg *config.Config, state *Progress, progressPath string, settings *ProjectSettings, skills []Skill, logger *sse.LogBroadcaster) error {
 	if err := llm.ValidateConfig(apiCfg); err != nil {
 		return err
 	}
@@ -175,7 +175,7 @@ func GenerateChapterAction(ctx context.Context, apiCfg *config.APIConfig, cfg *c
 			return fmt.Errorf("任务已取消")
 		}
 		logger.StepInfo(2, 6, "正在构思并撰写正文...")
-		content, err := generateChapterContentWithLengthControl(ctx, apiCfg, cfg, state, i, settings, extraConstraints, logger)
+		content, err := generateChapterContentWithLengthControl(ctx, apiCfg, cfg, state, i, settings, extraConstraints, skills, logger)
 		if err != nil {
 			return err
 		}
@@ -216,7 +216,7 @@ func GenerateChapterAction(ctx context.Context, apiCfg *config.APIConfig, cfg *c
 			if analysis.Reconcilable && strings.TrimSpace(analysis.ExtraConstraints) != "" {
 				logger.InfoKey("log.conflict_retry")
 				extraConstraints = strings.TrimSpace(analysis.ExtraConstraints)
-				content, err = generateChapterContentWithLengthControl(ctx, apiCfg, cfg, state, i, settings, extraConstraints, logger)
+				content, err = generateChapterContentWithLengthControl(ctx, apiCfg, cfg, state, i, settings, extraConstraints, skills, logger)
 				if err != nil {
 					return err
 				}
@@ -501,7 +501,7 @@ func ConfirmChapterAction(state *Progress, progressPath string) error {
 	return SaveProgress(progressPath, state)
 }
 
-func generateChapterContentStream(ctx context.Context, apiCfg *config.APIConfig, cfg *config.Config, state *Progress, idx int, settings *ProjectSettings, extraWritingConstraints string, logger *sse.LogBroadcaster) (string, error) {
+func generateChapterContentStream(ctx context.Context, apiCfg *config.APIConfig, cfg *config.Config, state *Progress, idx int, settings *ProjectSettings, extraWritingConstraints string, skills []Skill, logger *sse.LogBroadcaster) (string, error) {
 	ch := state.Chapters[idx]
 	lang := cfg.Language
 
@@ -550,6 +550,9 @@ func generateChapterContentStream(ctx context.Context, apiCfg *config.APIConfig,
 	if block := formatExtraWritingConstraintsBlock(extraWritingConstraints, lang); block != "" {
 		userPrompt += "\n\n" + block
 	}
+	if skillsContent := FormatSkillsContent(GetEnabledSkills(skills, cfg.SkillConfig)); skillsContent != "" {
+		userPrompt += "\n\n" + skillsContent
+	}
 
 	systemPrompt := state.CorePrompt
 	if systemPrompt == "" {
@@ -569,13 +572,13 @@ func generateChapterContentStream(ctx context.Context, apiCfg *config.APIConfig,
 	return stripChapterMetaProse(content, lang), nil
 }
 
-func generateChapterContentStreamWithRetryLog(ctx context.Context, apiCfg *config.APIConfig, cfg *config.Config, state *Progress, idx int, settings *ProjectSettings, extraWritingConstraints string, logger *sse.LogBroadcaster) string {
+func generateChapterContentStreamWithRetryLog(ctx context.Context, apiCfg *config.APIConfig, cfg *config.Config, state *Progress, idx int, settings *ProjectSettings, extraWritingConstraints string, skills []Skill, logger *sse.LogBroadcaster) string {
 	retryCount := 0
 	for {
 		if ctx.Err() != nil {
 			return ""
 		}
-		content, err := generateChapterContentStream(ctx, apiCfg, cfg, state, idx, settings, extraWritingConstraints, logger)
+		content, err := generateChapterContentStream(ctx, apiCfg, cfg, state, idx, settings, extraWritingConstraints, skills, logger)
 		if err == nil && content != "" {
 			return content
 		}
