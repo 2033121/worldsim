@@ -62,16 +62,6 @@ func (s *Simulator) EnableLLM(c *LLMClient) {
 // SetWorldbook 设置世界书（§3.3/§4.5：各 Agent 按分层注入）
 func (s *Simulator) SetWorldbook(wb *worldbook.Worldbook) { s.wb = wb }
 
-// worldBriefForDialogue 供 NPC/主角对话提示词用的世界简介——从世界书动态注入，杜绝任何硬编码的"浮城/都市"污染
-func (s *Simulator) worldBriefForDialogue() string {
-	if s.wb != nil {
-		if brief := s.wb.ForWorldBrief(); brief != "" {
-			return brief
-		}
-	}
-	return "这是一个活在故事里的世界，人们有各自的生活、关系和隐秘。"
-}
-
 func (s *Simulator) LastThinking() string { return s.lastThinking }
 
 // Thinkings 返回每日主角三问推理（小说化素材，day→thinking）
@@ -477,7 +467,7 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 				}
 				s.day += maxDays - 1 // RunDay 开头已 day++，这里再补 maxDays-1
 			} else {
-		// 真平淡：大步长跳跃 + 浓缩过渡段（网文式时间跳跃，带变化/积累/伏笔；跳跃量按世界时间尺度自由决定：都市天~月、修仙月~年~十年）
+		// 真平淡：大步长跳跃 + 浓缩过渡段（网文式时间跳跃，带变化/积累/伏笔；跳跃量按世界时间尺度自由决定）
 		skipText, skipDays := "", 30
 		if s.llm != nil {
 			skipText, skipDays = TimeSkipLLM(ctx, s.llm, s.engine.State(), s.heroName,
@@ -780,10 +770,11 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 	// 记忆写入（§4.6）：当日事件 → 主角记忆；世界变化 → 世界记忆
 	s.recordMemories(res)
 
-	// ---------- 关系系统：衰减 + 生命周期（"只见过几年"的悲欢） ----------
+	// ---------- 关系系统：衰减 + 生命周期（"只见过几年"的悲欢）+ 配角淡出 ----------
 	relChanges = nil
 	relChanges = append(relChanges, s.DecayRelations(s.heroName, 7)...) // 每7天好感衰减
 	relChanges = append(relChanges, s.CheckLifecycle()...)
+	relChanges = append(relChanges, s.FadeOutCheck()...)
 	if len(relChanges) > 0 {
 		lifeProp := engine.Proposal{
 			CommandID: s.nextCmd("life"), ActorID: "world_agent",
@@ -824,6 +815,7 @@ func (s *Simulator) recordMemories(res *DayResult) {
 		return
 	}
 	// ① 事件：主角记 + 事件涉及的 NPC 也记（各自视角）
+	// 龙套（walkon）不占记忆：只记主角视角的"遇到"，不给龙套建独立记忆
 	for _, ev := range res.Events {
 		imp := 0.3 + ev.Severity*0.7
 		s.mem.AddDay(s.heroName, fmt.Sprintf("第%d天：%s（%s）", ev.Day, ev.Title, ev.Frame), "event", imp, ev.Day)
@@ -831,13 +823,16 @@ func (s *Simulator) recordMemories(res *DayResult) {
 			if npc == "" || npc == s.heroName {
 				continue
 			}
+			if s.isWalkon(npc) {
+				continue // 龙套不建独立记忆
+			}
 			s.mem.AddDay(npc, fmt.Sprintf("第%d天：我卷进了这件事——%s", ev.Day, ev.Title), "event", imp*0.9, ev.Day)
 		}
 	}
 	// ② 对话：双方记忆（说话人记自己的话，其他在场者记听到了什么）
 	participants := []string{s.heroName}
 	for _, t := range res.Dialogue {
-		if t.Speaker != "" && t.Speaker != s.heroName {
+		if t.Speaker != "" && t.Speaker != s.heroName && !s.isWalkon(t.Speaker) {
 			participants = append(participants, t.Speaker)
 		}
 	}
@@ -973,7 +968,7 @@ func (s *Simulator) generateEvent() *EventCard {
 			break
 		}
 	}
-	// NPC：第一个非主角的实体（修仙=陈伯/赵成，都市=老陈）
+	// NPC：第一个非主角的实体（由世界初始化决定）
 	npcName := ""
 	for n := range s.engine.State().Entities {
 		if n != s.heroName {
