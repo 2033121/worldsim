@@ -69,18 +69,17 @@ func CharacterSheetLLM(ctx context.Context, c *LLMClient, name, identity, hint s
 	system := `你是一位角色设计大师。为下面这位新登场的角色设计一张完整的人设卡（让TA像真人一样有血有肉）。
 角色：` + name + `（` + identity + `）
 线索：` + hint + `
-
 输出严格 JSON：
-{"name":"` + name + `","age":"大致年龄段","identity":"职业/身份","personality":["性格特质×4，如谨慎/固执/热心/毒舌"],"habits":["习惯/小动作/口头禅×2，具体可感，如'说话前先摸一下鼻子'"],"social":["社交关系×2，如'和楼下保安关系不错，讨厌催稿的编辑'"],"behavior":["行为方式×2，如'遇事先保命，再谈正义'"],"thinking":["思考方式×2，如'相信事出反常必有妖，从不轻信巧合'"],"motives":["目标×2，如'攒钱在城南开一家小店'"],"fears":["软肋×1，如'怕黑，更怕被人看穿'"],"secret":"只有TA自己知道的秘密（一句话）"}
+{"name":"` + name + `","age":"大致年龄段","identity":"职业/身份","personality":["性格特质×4，具体可感"],"habits":["习惯/小动作/口头禅×2，具体可感"],"social":["社交关系×2，具体可感"],"behavior":["行为方式×2，具体可感"],"thinking":["思考方式×2，具体可感"],"motives":["目标×2，具体可感"],"fears":["软肋×1，具体可感"],"secret":"只有TA自己知道的秘密（一句话）"}
 要求：
 1. 具体、可感、有矛盾感（人不是单面的），每个习惯/社交都要有画面感，禁止空泛形容词堆砌。
-2. **习惯/口头禅必须从TA的职业、时代背景、生活日常推导**——夜班店员会摸鱼泡咖啡、修士会下意识拂尘、捕快习惯性摸腰间令牌、末世幸存者会数罐头。至少1个"与主线无关的生活小碎片"（TA私下爱做的事、小癖好、日常routine），这是让人物像"活人"而不是"剧情NPC"的关键。
+2. **习惯/口头禅必须从TA的职业、时代背景、生活日常推导**——TA的日常职业动作、生活细节、时代特有的行为方式；至少1个"与主线无关的生活小碎片"（TA私下爱做的事、小癖好、日常routine），这是让人物像"活人"而不是"剧情NPC"的关键。
 3. 说话方式要有个人烙印：呛人/话痨/沉默/爱反问/口头禅，符合TA的身份与性格。
 4. **记忆钉四件套（让角色"被记住"的具象符号，主角必须四件齐全，配角至少1~2件）**：
-   · 招牌动作：能"被模仿"的动作，与性格绑定（如恐怖屋老板检查道具时习惯性打扫卫生）
-   · 口头禅：一句反复出现的口头语，能体现性格（老江湖呛人挤牙膏；修士爱说"大道至简"）
+   · 招牌动作：能"被模仿"的动作，与性格绑定
+   · 口头禅：一句反复出现的口头语，能体现性格
    · 专属反应：遇到特定情况时的个人化反应（紧张会笑的人/难过会吃东西的人/生气时反而安静的人）
-   · 专属物件：随身携带、有故事的物件（旧怀表/褪色的护身符/一根总在转的笔）
+   · 专属物件：随身携带、有故事的物件
    以上四件套写进 habits/social/behavior 相应字段，必须与TA的身份和世界设定自洽，不得套用别的世界的现成符号。` + CharacterDesignSkills()
 	raw, err := c.CompleteTier(ctx, "fast", system, "请设计这张人设卡。")
 	if err != nil {
@@ -127,7 +126,7 @@ func (s *Simulator) BuildCharacterSheet(ctx context.Context, name string) []engi
 		identity = ent.Job
 	}
 	hint, _ := ent.Extra["persona"].(string)
-	// 注入世界语境：习惯/小动作必须贴合本世界的世界观与时代（都市异能≠仙侠≠末世）
+	// 注入世界语境：习惯/小动作必须贴合本世界的世界观与时代
 	if s.wb != nil {
 		if wc := s.wb.ForWorldBrief(); wc != "" {
 			hint = strings.TrimSpace(hint + "\n世界背景：" + wc)
@@ -175,7 +174,7 @@ func (s *Simulator) SheetOf(name string) *CharacterSheet {
 	return &cs
 }
 
-// FormatSheetForPrompt 组合角色档案+记忆 注入 NPC prompt
+// FormatSheetForPrompt 组合角色档案+记忆+动态属性 注入 NPC prompt
 func (s *Simulator) FormatSheetForPrompt(name string) string {
 	var parts []string
 	if cs := s.SheetOf(name); cs != nil {
@@ -184,6 +183,11 @@ func (s *Simulator) FormatSheetForPrompt(name string) string {
 	if ent, ok := s.engine.State().Entities[name]; ok {
 		if p, ok := ent.Extra["persona"].(string); ok && p != "" {
 			parts = append(parts, "一句话人设："+p)
+		}
+		// 世界书驱动的动态属性集（属性名随世界变化）
+		if len(ent.Stats) > 0 {
+			b, _ := json.Marshal(ent.Stats)
+			parts = append(parts, "个人属性："+string(b))
 		}
 	}
 	return strings.Join(parts, "\n")
@@ -194,6 +198,16 @@ func roleOf(ent engine.Entity) string {
 		return r
 	}
 	return "npc"
+}
+
+// isWalkon 判断角色是否为龙套（walkon）：只出场一两次、不建档不占记忆的路人
+func (s *Simulator) isWalkon(name string) bool {
+	if ent, ok := s.engine.State().Entities[name]; ok {
+		if t, ok := ent.Extra["tier"].(string); ok && t == "walkon" {
+			return true
+		}
+	}
+	return false
 }
 
 func nonEmptyOr(list []string, fallback string) []string {
