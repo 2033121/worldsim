@@ -4,7 +4,7 @@
   import { connectSSE } from './lib/sse.js';
   import { api } from './lib/api.js';
   import { onMount } from 'svelte';
-  import { t, uiLocale, setLocale } from './lib/i18n/index.js';
+  import { t, uiLocale, setLocale, applyDefaultLocale } from './lib/i18n/index.js';
   import TaskTokenBadge from './components/TaskTokenBadge.svelte';
   import Projects from './pages/Projects.svelte';
   import Config from './pages/Config.svelte';
@@ -29,7 +29,7 @@
         currentProject.set(cur.name);
         if (cur.language) {
           projectLanguage.set(cur.language);
-          setLocale(cur.language);
+          applyDefaultLocale(cur.language);
         }
         try { const p = await api('GET', '/api/progress'); progress.set(p); } catch (e) {}
       }

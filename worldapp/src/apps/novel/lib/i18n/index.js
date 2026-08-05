@@ -5,6 +5,7 @@ import zh from './zh.js';
 import en from './en.js';
 
 const STORAGE_KEY = 'showmethestory.uiLocale';
+const STORAGE_EXPLICIT_KEY = 'showmethestory.uiLocaleExplicit';
 
 const catalogs = { zh, en };
 
@@ -16,7 +17,16 @@ function readStored() {
   return null;
 }
 
+function readExplicit() {
+  try {
+    return localStorage.getItem(STORAGE_EXPLICIT_KEY) === '1';
+  } catch (e) {}
+  return false;
+}
+
 export const uiLocale = writable(readStored() || 'zh');
+// 记录用户是否显式选择过界面语言；若为 false，则项目语言可作为默认值（但不覆盖用户选择）
+export const uiLocaleExplicit = writable(readExplicit());
 
 uiLocale.subscribe(v => {
   try {
@@ -27,8 +37,18 @@ uiLocale.subscribe(v => {
   } catch (e) {}
 });
 
+// 用户显式切换（保留用户选择）
 export function setLocale(lang) {
   if (lang !== 'zh' && lang !== 'en') return;
+  uiLocale.set(lang);
+  uiLocaleExplicit.set(true);
+  try { localStorage.setItem(STORAGE_EXPLICIT_KEY, '1'); } catch (e) {}
+}
+
+// 项目语言作为默认值：仅当用户尚未显式选择界面语言时生效，不覆盖用户选择
+export function applyDefaultLocale(lang) {
+  if (lang !== 'zh' && lang !== 'en') return;
+  if (get(uiLocaleExplicit)) return;
   uiLocale.set(lang);
 }
 

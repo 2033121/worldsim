@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { api } from '../lib/api.js';
   import { currentProject, projects, addToast, showConfirm, taskRunning, progress, config, settings, chatSessions, currentChatSession, projectLanguage } from '../lib/stores.js';
-  import { t, setLocale } from '../lib/i18n/index.js';
+  import { t, setLocale, applyDefaultLocale } from '../lib/i18n/index.js';
 
   let newProjectName = '';
   let newProjectLang = 'zh';
@@ -41,7 +41,7 @@
         config.set(cfg);
         if (cfg && cfg.language) {
           projectLanguage.set(cfg.language);
-          setLocale(cfg.language);
+          applyDefaultLocale(cfg.language);
         }
       } catch (e) {}
       try { settings.set(await api('GET', '/api/settings')); } catch (e) {}
