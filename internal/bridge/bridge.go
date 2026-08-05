@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"worldsim/internal/config"
@@ -134,7 +135,7 @@ func collectCharacters(st *engine.WorldState) []CharacterInfo {
 	for name := range st.Entities {
 		names = append(names, name)
 	}
-	sortStrings(names)
+	sort.Strings(names)
 	for _, name := range names {
 		ent := st.Entities[name]
 		ci := CharacterInfo{Name: name, Role: entityRole(ent)}
@@ -189,7 +190,7 @@ func collectOrganizations(st *engine.WorldState) []story.Organization {
 	for name := range st.WorldLevel.Factions {
 		names = append(names, name)
 	}
-	sortStrings(names)
+	sort.Strings(names)
 	for _, name := range names {
 		fac := st.WorldLevel.Factions[name]
 		typ := fac.Visibility
@@ -411,12 +412,4 @@ func buildProgress(data *WorldData, lang string) *story.Progress {
 	}
 
 	return p
-}
-
-func sortStrings(s []string) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j] < s[j-1]; j-- {
-			s[j], s[j-1] = s[j-1], s[j]
-		}
-	}
 }

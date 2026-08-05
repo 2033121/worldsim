@@ -36,6 +36,7 @@ func (t *Tavily) Name() string { return "tavily" }
 
 // Search 调用 Tavily Search API 搜索网页。
 // endpoint 使用 /search 接口，通过 Authorization: Bearer 鉴权（Tavily 推荐方式）。
+// Tavily basic 深度未提供语言级过滤，因此 language 参数当前不映射（保留以符合 Provider 接口）。
 func (t *Tavily) Search(ctx context.Context, query string, max int, language string) ([]Result, error) {
 	if strings.TrimSpace(t.APIKey) == "" {
 		return nil, fmt.Errorf("tavily 搜索未配置 API key（search.json 的 tavily_api_key）")
@@ -48,12 +49,9 @@ func (t *Tavily) Search(ctx context.Context, query string, max int, language str
 	}
 
 	body := map[string]any{
-		"query":       query,
-		"max_results": max,
+		"query":        query,
+		"max_results":  max,
 		"search_depth": "basic",
-	}
-	if language != "" {
-		body["topic"] = "general"
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
