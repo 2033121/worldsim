@@ -2,6 +2,21 @@
 
 本项目所有重要变更都记录在此。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [1.5.0] - 2026-08-05
+
+### ✨ 新增
+- **内嵌持续监测与自动修复模块（self-healing）**：`internal/selfheal` 内嵌于世界模拟服务，跟踪运行过程与错误日志，异常自动诊断根源并自主修复
+  - **四类异常监测**（15s 一轮）：LLM/API 可用性（api.json 缺失/损坏/未配置）、服务进程（48090/48091/48092 端口探活）、数据一致性（world_state.json 合法性）、模拟循环（连续 RunDay 失败/卡死）
+  - **自动修复动作**：LLM 配置缺失 → 生成 api.json 模板；模拟连续失败 → 中断异常循环防空转烧 token；数据损坏 → 回退最近快照并重建 Simulator
+  - **运行日志落盘**：`wsdata/selfheal/runtime.log`；检测/诊断/修复记录持久化到 `wsdata/selfheal/incidents.jsonl`（跨重启保留）
+  - **前端监测面板**：世界控制台新增「🛠️ 监测」Tab（`SelfHealPanel.svelte`），展示运行时长/自动修复次数/LLM 就绪状态/各项健康检查/历史 Incident 记录
+  - **监测接口**：`GET /api/selfheal/status` 与 `GET /api/selfheal/incidents`
+  - **单元测试**：`internal/selfheal/selfheal_test.go` 覆盖初始化/LLM 检测修复/数据回退/循环失败/ Incident 持久化
+
+### ✅ 验证
+- `go build ./...` 通过
+- `go test ./internal/selfheal/...` 全绿（5/5）
+
 ## [1.4.0] - 2026-08-05
 
 ### ✨ 新增

@@ -34,6 +34,7 @@ import (
 	"worldsim/internal/prompt"
 	"worldsim/internal/research"
 	"worldsim/internal/search"
+	"worldsim/internal/selfheal"
 	"worldsim/internal/sim"
 	"worldsim/internal/sse"
 	"worldsim/internal/themes"
@@ -104,7 +105,12 @@ func main() {
 	fmt.Printf(" [系统] 小说创作服务已启动: http://localhost%s\n", storyPort)
 
 	// ---------- 启动世界模拟服务（48091） ----------
-	go startWorldServer(worldDir, apiCfg, researchAgent)
+	// 内嵌监测与自愈模块：跟踪运行/错误日志，异常自动诊断并修复
+	healMgr, healErr := selfheal.New(progDir, apiCfgPath)
+	if healErr != nil {
+		fmt.Printf(" [警告] 自愈模块初始化失败: %v\n", healErr)
+	}
+	go startWorldServer(worldDir, apiCfg, researchAgent, healMgr)
 	fmt.Printf(" [系统] 世界模拟服务已启动: http://localhost%s\n", worldPort)
 
 	// ---------- 启动统一前端入口（48092）：浏览器式导航外壳 + API 网关 ----------
@@ -199,9 +205,14 @@ type worldInstance struct {
 
 func (w *worldInstance) ready() bool { return w != nil && w.engine != nil }
 
-func startWorldServer(worldDir string, apiCfg *config.APIConfig, ra *research.Agent) {
-	ws := &worldServer{baseDir: worldDir, apiCfg: apiCfg, worlds: map[string]*worldInstance{}, research: ra}
+func startWorldServer(worldDir string, apiCfg *config.APIConfig, ra *research.Agent, heal *selfheal.Manager) {
+	ws := &worldServer{baseDir: worldDir, apiCfg: apiCfg, worlds: map[string]*worldInstance{}, research: ra, heal: heal}
 	ws.scanWorlds()
+
+	// ---------- 内嵌监测与自愈模块：注册修复回调 + 运行时状态源 + 启动监测循环 ----------
+	if heal != nil {
+		ws.setupSelfHeal()
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/worlds", ws.handleWorldsList)
@@ -240,6 +251,10 @@ func startWorldServer(worldDir string, apiCfg *config.APIConfig, ra *research.Ag
 
 	// 系统状态（联网搜索是否启用等）
 	mux.HandleFunc("GET /api/system/status", ws.handleSystemStatus)
+
+	// 内嵌监测与自愈：状态 / 记录（前端监测面板）
+	mux.HandleFunc("GET /api/selfheal/status", ws.handleSelfHealStatus)
+	mux.HandleFunc("GET /api/selfheal/incidents", ws.handleSelfHealIncidents)
 
 	// LLM 全局用量统计（实时 + 历史；统一网关 48092 的 /api/* 也转发到这里）
 	mux.HandleFunc("GET /api/llm/stats", ws.handleLLMStats)
@@ -382,6 +397,9 @@ type worldServer struct {
 	loopCancel  context.CancelFunc
 	loopTarget  int           // 目标 day（世界时间）
 	loopWorld   string        // 循环绑定的世界名
+	loopConsecFail int        // 连续 RunDay 失败次数（自愈监测用）
+
+	heal *selfheal.Manager // 内嵌监测与自愈模块
 }
 
 // handleThemesList GET /api/worldbooks/themes — 主题包列表（建世界下拉用）
@@ -493,12 +511,27 @@ func (ws *worldServer) handleLoopSet(w http.ResponseWriter, r *http.Request) {
 			default:
 			}
 			if res, err := inst.sim.RunDay(ctx); err != nil {
-			// 单日失败不中断循环（中转站抖动/超时），但停一会儿再试
-			time.Sleep(1 * time.Second)
-			continue
-		} else {
-			inst.lastDay = res // 供前端"今日对话/事件"面板
-		}
+				// 单日失败不中断循环（中转站抖动/超时），但统计连续失败（供自愈监测判断是否异常）
+				ws.loopMu.Lock()
+				ws.loopConsecFail++
+				cFail := ws.loopConsecFail
+				ws.loopMu.Unlock()
+				if ws.heal != nil && cFail == 1 {
+					ws.heal.Heartbeat("warn",
+						fmt.Sprintf("「%s」Day%d 模拟失败(%v)，连续第 %d 次（自动重试）", inst.name, inst.engine.State().Day, err, cFail))
+				}
+				time.Sleep(1 * time.Second)
+				continue
+			} else {
+				ws.loopMu.Lock()
+				ws.loopConsecFail = 0
+				ws.loopMu.Unlock()
+				inst.lastDay = res // 供前端"今日对话/事件"面板
+				if ws.heal != nil {
+					ws.heal.Heartbeat("info",
+						fmt.Sprintf("「%s」Day%d 完成（mode=%s，事件%d）", inst.name, res.Day, res.Mode, len(res.Events)))
+				}
+			}
 			inst.autoSnapshot() // 每30天自动存档（时间回退锚点）
 			// 就绪度驱动：素材够了自动停，等用户看小说
 			if rdy, ok := inst.sim.Readiness()["ready"].(bool); ok && rdy {
@@ -826,6 +859,138 @@ func (ws *worldServer) handleSystemStatus(w http.ResponseWriter, r *http.Request
 		"search_enabled":    webSearchTools != nil && len(webSearchTools.Schemas()) > 0,
 		"research_enabled":  ws.research != nil,
 		"theme_cards":       ws.themeCardIDs(),
+	})
+}
+
+// ---------- 内嵌监测与自愈 ----------
+
+// setupSelfHeal 注册修复回调、运行时状态源，并启动周期性监测循环。
+func (ws *worldServer) setupSelfHeal() {
+	h := ws.heal
+	if h == nil {
+		return
+	}
+	// 1. 运行时状态源：模拟循环状态（卡死 / 连续失败检测）
+	h.SetLoopStateSource(func() selfheal.LoopState {
+		ws.loopMu.Lock()
+		defer ws.loopMu.Unlock()
+		st := selfheal.LoopState{
+			Running:    ws.loopRunning,
+			World:      ws.loopWorld,
+			TargetDay:  ws.loopTarget,
+			ConsecFail: ws.loopConsecFail,
+		}
+		if inst := ws.worlds[ws.loopWorld]; inst != nil && inst.engine != nil {
+			st.Day = inst.engine.State().Day
+			st.LLMRunning = inst.llm != nil && inst.llm.Cfg != nil && inst.llm.Cfg.Model != ""
+		}
+		return st
+	})
+
+	// 2. 修复回调：LLM 配置缺失 → 生成 api.json 模板
+	h.RegisterHealer("llm_config", func() (string, error) { return ws.healLLMConfig() })
+
+	// 3. 修复回调：模拟循环连续失败 → 中断异常循环（防空转烧 token）
+	h.RegisterHealer("restart_loop", func() (string, error) {
+		ws.loopMu.Lock()
+		if ws.loopCancel != nil {
+			ws.loopCancel()
+		}
+		ws.loopRunning = false
+		ws.loopConsecFail = 0
+		ws.loopMu.Unlock()
+		return "已中断异常的模拟循环（等待用户重新 start）", nil
+	})
+
+	// 4. 修复回调：数据损坏 → 回退最近快照（按世界动态注册）
+	for name := range ws.worlds {
+		h.RegisterHealer("rewind_"+name, ws.healRewind(name))
+	}
+
+	// 5. 启动监测循环（15s 一轮；panic 兜底不中断）
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Printf(" [自愈] 监测循环 panic，已恢复: %v\n", r)
+			}
+		}()
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			h.Tick()
+		}
+	}()
+	fmt.Println(" [自愈] 监测与自动修复已启用（15s 一轮）")
+}
+
+// healLLMConfig 修复 api.json 缺失：生成模板（用户填入 base_url/model 后启用 LLM）。
+func (ws *worldServer) healLLMConfig() (string, error) {
+	path := filepath.Join(ws.baseDir, "..", "api.json")
+	if _, err := os.Stat(path); err == nil {
+		return "api.json 已存在，无需重建", nil
+	}
+	cfg := config.DefaultAPIConfig()
+	b, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, b, 0644); err != nil {
+		return "", err
+	}
+	return "已生成 api.json 模板（填入 base_url/model 并重启后启用 LLM）", nil
+}
+
+// healRewind 修复数据损坏：回退到最近快照并重建实例（覆盖 world_state.json 等）。
+func (ws *worldServer) healRewind(name string) selfheal.HealFunc {
+	return func() (string, error) {
+		inst := ws.worlds[name]
+		if inst == nil || inst.sim == nil {
+			return "世界无活动实例，无需回退", nil
+		}
+		// 先停循环，避免回退过程中写入
+		ws.loopMu.Lock()
+		if ws.loopCancel != nil {
+			ws.loopCancel()
+		}
+		ws.loopRunning = false
+		ws.loopCancel = nil
+		ws.loopConsecFail = 0
+		ws.loopMu.Unlock()
+
+		meta, err := inst.sim.RewindTo(inst.engine.State().Day)
+		if err != nil {
+			return "回退失败: " + err.Error(), err
+		}
+		// 刷新 engine 内存状态 + 重建 Simulator
+		if err := inst.engine.Load(filepath.Join(inst.dir, "world_state.json")); err != nil {
+			return "回退后状态刷新失败: " + err.Error(), err
+		}
+		inst.sim = sim.NewSimulator(inst.engine, inst.dir)
+		inst.heroName = inst.sim.HeroName()
+		inst.applyLLM()
+		// 重新注册该世界的数据修复回调（sim 已重建）
+		ws.heal.RegisterHealer("rewind_"+name, ws.healRewind(name))
+		return fmt.Sprintf("已回退到 Day%d 快照（%s）", meta.Day, meta.Reason), nil
+	}
+}
+
+// handleSelfHealStatus GET /api/selfheal/status — 自愈模块整体状态（前端监测面板）
+func (ws *worldServer) handleSelfHealStatus(w http.ResponseWriter, r *http.Request) {
+	if ws.heal == nil {
+		ws.writeJSON(w, 200, map[string]any{"enabled": false})
+		return
+	}
+	ws.writeJSON(w, 200, ws.heal.Status())
+}
+
+// handleSelfHealIncidents GET /api/selfheal/incidents — 检测与修复记录（最新在前）
+func (ws *worldServer) handleSelfHealIncidents(w http.ResponseWriter, r *http.Request) {
+	if ws.heal == nil {
+		ws.writeJSON(w, 200, map[string]any{"incidents": []any{}})
+		return
+	}
+	ws.writeJSON(w, 200, map[string]any{
+		"incidents": ws.heal.Incidents(),
 	})
 }
 

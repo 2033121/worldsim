@@ -21,6 +21,7 @@
   import SnapshotPanel from './components/SnapshotPanel.svelte';
   import AttachPanel from './components/AttachPanel.svelte';
   import ResearchPanel from './components/ResearchPanel.svelte';
+  import SelfHealPanel from './components/SelfHealPanel.svelte';
   import CreateWorldModal from './components/CreateWorldModal.svelte';
   import PauseModal from './components/PauseModal.svelte';
 
@@ -99,7 +100,8 @@
           ['memory', '🧠', '记忆'],
           ['entities', '🧍', '实体'],
           ['worldbook', '📚', '世界书'],
-          ['stats', '📊', '统计']
+          ['stats', '📊', '统计'],
+          ['selfheal', '🛠️', '监测']
         ] as [id, icon, label]}
           <button
             class="btn btn-md {activeTab === id ? 'btn-primary font-medium' : 'btn-ghost'} gap-1.5"
@@ -126,6 +128,8 @@
           <WorldbookPanel />
         {:else if $activeTab === 'stats'}
           <StatsPanel />
+        {:else if $activeTab === 'selfheal'}
+          <SelfHealPanel />
         {/if}
       </div>
     </main>
