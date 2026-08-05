@@ -133,15 +133,23 @@ WorldSim 提供标准 MCP Server（`worldsim-mcp/server.py`，零依赖），可
 
 ## 📥 下载
 
-多平台二进制 + 插件包 + MCP Server 全部见 [Releases](https://github.com/2033121/worldsim/releases)（最新 **v1.3.1**）：
+多平台二进制 + 插件包 + MCP Server 全部见 [Releases](https://github.com/2033121/worldsim/releases)（最新 **v1.4.0**）：
 
 - Linux amd64 / arm64（tar.gz）
 - Windows amd64（zip，含 run.bat 一键启动）
 - macOS amd64 / arm64（tar.gz）
-- `worldsim_plugin_v1.3.1.zip`（Operit 插件包，直接导入）
-- `worldsim-mcp-v1.3.1.zip`（Codex/Trae/Claude MCP Server，零依赖）
+- `worldsim_plugin_v1.4.0.zip`（Operit 插件包，直接导入）
+- `worldsim-mcp-v1.4.0.zip`（Codex/Trae/Claude MCP Server，零依赖）
 
 > 🔄 **发布全自动**：打 `v*` tag 即触发 GitHub Actions 交叉编译 5 平台 + 自动组装插件包/MCP 包，共 7 个资产，无需手动上传。
+
+### ✨ v1.4.0 更新亮点
+
+- **联网搜索（内置 Tavily）**：写作页「搜素材」面板一键搜索网络素材，无需再自托管 SearXNG 容器
+- **世界 → 小说直接播种**：把世界书 / 角色 / 势力 / 近期编年史事件直接播种成小说大纲与设定（零 LLM 调用）
+- **LLM 用量统计（TokenStats）**：全局 token 实时聚合 + hour/day 持久化 + 费用估算
+- **技能注入写作 / 大纲**：大纲 / 分卷 / 章节生成自动注入已启用技能 SOP
+- **MCP / Operit 升级到 26 个工具**：新增 `world_seed_novel`（世界播种小说），Codex / Trae / Operit 均可调用
 
 ## 🔌 Operit 插件包
 
