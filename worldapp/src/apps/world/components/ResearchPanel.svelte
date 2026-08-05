@@ -99,6 +99,12 @@
 
   loadStatus();
   loadHistory();
+
+  function scrollToAttach() {
+    const el = [...document.querySelectorAll('h2')].find((h) => h.textContent.includes('世界参考资料'));
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    toast('在左侧「📎 世界参考资料」面板上传，支持 txt/md/json/csv/docx', 'info');
+  }
 </script>
 
 <div class="space-y-4">
@@ -107,11 +113,12 @@
     <h3 class="text-lg font-semibold text-primary">题材研究 / 主题规划</h3>
     <span class="badge badge-ghost badge-sm">{searchOn ? '联网搜索已启用' : '未启用联网搜索'}</span>
     <div class="flex-1"></div>
+    <button class="btn btn-ghost btn-xs" on:click={scrollToAttach}>📎 上传附件</button>
     <button class="btn btn-ghost btn-xs" on:click={loadHistory}>刷新历史</button>
   </div>
 
   <div class="paper rounded-2xl p-4 space-y-3">
-    <label class="label py-0 text-xs text-base-content/60">你的题材想法（一句话即可，可带附件——左上"世界参考资料"上传市场报告/竞品/设定稿）</label>
+    <label class="label py-0 text-xs text-base-content/60">你的题材想法（一句话即可，可带附件——点右上"📎 上传附件"上传市场报告/竞品/设定稿，支持 txt/md/docx）</label>
     <textarea class="textarea textarea-bordered w-full min-h-[80px]" bind:value={idea}
       placeholder="如：想做一本修仙+职场的文，主角是给神仙发工资的HR…"></textarea>
     <div class="flex gap-2">

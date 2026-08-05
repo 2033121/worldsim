@@ -61,7 +61,7 @@
     {/if}
   </div>
   <p class="text-[11px] text-base-content/40 mb-2">
-    上传设定/事实文本（txt/md/json/csv 等），聚合后注入所有 Agent 上下文，剧情必须遵循。
+    上传设定/事实文本（txt / md / json / csv / docx 等），聚合后注入所有 Agent 上下文，剧情必须遵循。
   </p>
 
   <div class="flex gap-2">

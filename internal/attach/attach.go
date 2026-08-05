@@ -1,12 +1,16 @@
 // Package attach 提供"世界参考资料"附件管理：上传/列表/删除 + 文本提取 + 聚合注入。
 // 附件是用户上传给某个世界的设定/事实补充（txt/md/json/csv 等纯文本），
 // 会被聚合为"世界参考资料"注入到世界/GM/事件 Agent 的 LLM 上下文，让剧情严格遵循用户提供的设定。
-// 设计保持零外部依赖（与项目单二进制风格一致）：仅直接支持纯文本格式提取；
-// pdf/docx 等二进制格式仅保存文件（extractable=false），供日后扩展或外部工具转换。
+// 设计保持零外部依赖（与项目单二进制风格一致）：直接支持纯文本格式提取；
+// .docx 用标准库 zip+xml 解析正文；pdf/.doc 等其它二进制格式仅保存文件（extractable=false），供日后扩展。
 package attach
 
 import (
+	"archive/zip"
+	"bytes"
+	"encoding/xml"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -24,11 +28,12 @@ type Attachment struct {
 	Uploaded    string `json:"uploaded"`    // 上传时间
 }
 
-// extractableExts 支持直接提取文本的扩展名（纯 UTF-8 文本，零依赖）。
+// extractableExts 支持直接提取文本的扩展名（纯 UTF-8 文本，零依赖；.docx 用标准库 zip+xml 解析）。
 var extractableExts = map[string]bool{
 	".txt": true, ".md": true, ".json": true, ".csv": true,
 	".xml": true, ".html": true, ".htm": true, ".log": true,
 	".yaml": true, ".yml": true, ".ini": true, ".toml": true,
+	".docx": true,
 }
 
 // MaxBytes 单文件大小上限（8MB）。
@@ -54,11 +59,73 @@ func extractText(name string, data []byte) (string, bool) {
 	if !extractableExts[ext] {
 		return "", false
 	}
+	// .docx 走 zip+xml 解析（Word 正文）
+	if ext == ".docx" {
+		return extractDocx(data)
+	}
 	// 去除 UTF-8 BOM
 	if len(data) >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF {
 		data = data[3:]
 	}
 	s := strings.TrimSpace(string(data))
+	if s == "" {
+		return "", false
+	}
+	return s, true
+}
+
+// extractDocx 用标准库解析 .docx（zip 包）提取正文纯文本。
+// .docx 本质是 zip：正文在 word/document.xml，段落 <w:p>，文本 <w:t>。
+// 零外部依赖（archive/zip + encoding/xml）。
+func extractDocx(data []byte) (string, bool) {
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return "", false
+	}
+	var docXML []byte
+	for _, f := range zr.File {
+		if f.Name == "word/document.xml" {
+			rc, err := f.Open()
+			if err != nil {
+				return "", false
+			}
+			docXML, err = io.ReadAll(rc)
+			rc.Close()
+			if err != nil {
+				return "", false
+			}
+			break
+		}
+	}
+	if len(docXML) == 0 {
+		return "", false
+	}
+	var b strings.Builder
+	d := xml.NewDecoder(bytes.NewReader(docXML))
+	inT := false
+	for {
+		tok, err := d.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if t.Name.Local == "t" {
+				inT = true
+			} else if t.Name.Local == "p" && !inT {
+				b.WriteString("\n")
+			}
+		case xml.EndElement:
+			if t.Name.Local == "t" {
+				inT = false
+			}
+		case xml.CharData:
+			if inT {
+				b.WriteString(string(t))
+			}
+		}
+	}
+	s := strings.TrimSpace(b.String())
 	if s == "" {
 		return "", false
 	}
