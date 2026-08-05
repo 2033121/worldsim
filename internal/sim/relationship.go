@@ -54,13 +54,13 @@ func RelStatusLabel(affinity, trust float64) string {
 
 // RelationshipView 某角色视角下的一段关系（用于查询/展示）
 type RelationshipView struct {
-	Other    string   `json:"other"`
-	Affinity float64  `json:"affinity"`  // 好感 -1~1（负=厌恶）
-	Trust    float64  `json:"trust"`     // 信任 0~1
-	Status   string   `json:"status"`    // 关系状态
-	SinceDay int      `json:"since_day"` // 初遇日
-	Events   []string `json:"events"`    // 关系大事记
-	Role     string   `json:"role"`      // 对方在剧情中的角色定位
+	Other     string   `json:"other"`
+	Affinity  float64  `json:"affinity"`  // 好感 -1~1（负=厌恶）
+	Trust     float64  `json:"trust"`     // 信任 0~1
+	Status    string   `json:"status"`    // 关系状态
+	SinceDay  int      `json:"since_day"` // 初遇日
+	Events    []string `json:"events"`    // 关系大事记
+	Role      string   `json:"role"`      // 对方在剧情中的角色定位
 }
 
 // ---------- 关系读写（走 State Engine 提案，引擎是唯一事实源） ----------
@@ -180,14 +180,16 @@ func (s *Simulator) DecayRelations(hero string, everyNDays int) []engine.Change 
 // NewCharacter 事件引入的新角色
 type NewCharacter struct {
 	Name     string `json:"name"`
-	Gender   string `json:"gender"`    // 男/女/未知
-	Identity string `json:"identity"`  // 职业/身份
-	Persona  string `json:"persona"`   // 一句话人设（性格/背景）
-	Location string `json:"location"`  // 首次出场地点
+	Gender   string `json:"gender"`   // 男/女/未知
+	Identity string `json:"identity"` // 职业/身份
+	Persona  string `json:"persona"`  // 一句话人设（性格/背景）
+	Location string `json:"location"` // 首次出场地点
 	RoleHint string `json:"role_hint"` // 剧情定位建议：love_interest(潜在女主)/important_npc/rival/npc
+	Tier     string `json:"tier"`     // 配角层级：core=核心(建档+记忆) | support=重要(轻量) | walkon=龙套(不建档不记忆)
 }
 
 // RegisterCharacter 注册新角色实体（谁登场由世界决定，是否成为女主由互动决定）
+// 分层：core=核心配角（完整人设+记忆）| support=重要配角（轻量）| walkon=龙套（不建档不占记忆）
 func (s *Simulator) RegisterCharacter(c NewCharacter) []engine.Change {
 	if c.Name == "" {
 		return nil
@@ -195,6 +197,16 @@ func (s *Simulator) RegisterCharacter(c NewCharacter) []engine.Change {
 	// 已存在则跳过
 	if _, ok := s.engine.State().Entities[c.Name]; ok {
 		return nil
+	}
+	tier := strings.TrimSpace(c.Tier)
+	if tier == "" {
+		// 未标注：按 role_hint 推断（love_interest/rival=core，其余=support）
+		switch c.RoleHint {
+		case "love_interest", "rival", "important_npc":
+			tier = "core"
+		default:
+			tier = "support"
+		}
 	}
 	var changes []engine.Change
 	// 兜底地点：主角所在地优先（任何世界通用）
@@ -214,9 +226,14 @@ func (s *Simulator) RegisterCharacter(c NewCharacter) []engine.Change {
 		engine.Change{Path: "entities." + c.Name + ".extra.persona", Op: "set", Value: firstNonEmpty(c.Persona, "一个普通市民")},
 		engine.Change{Path: "entities." + c.Name + ".extra.gender", Op: "set", Value: firstNonEmpty(c.Gender, "未知")},
 		engine.Change{Path: "entities." + c.Name + ".extra.role", Op: "set", Value: firstNonEmpty(c.RoleHint, "npc")},
+		engine.Change{Path: "entities." + c.Name + ".extra.tier", Op: "set", Value: tier},
 		engine.Change{Path: "entities." + c.Name + ".extra.debut_day", Op: "set", Value: s.day},
 	)
-	// 主角认识TA
+	// 龙套（walkon）：轻量注册，不建档不占记忆——只留一句话人设，出场即走
+	if tier == "walkon" {
+		return changes
+	}
+	// 主角认识TA（核心/重要配角才有关系值）
 	changes = append(changes, engine.Change{Path: "entities." + s.heroName + ".relationship." + c.Name, Op: "set", Value: 0.08})
 	changes = append(changes, engine.Change{Path: "entities." + s.heroName + ".extra.rel_since_" + c.Name, Op: "set", Value: s.day})
 	return changes
@@ -248,9 +265,43 @@ func (s *Simulator) CheckLifecycle() []engine.Change {
 	return changes
 }
 
+// FadeOutCheck 配角淡出机制：小说里配角不是永远在场的——
+// 长时间没出场的 support/core 配角自动降级为 "mentioned"（只在编年史/事件里被提起，不再主动登场），
+// 之后若再次与主角互动则恢复 active。龙套（walkon）不参与（本来就轻量）。
+func (s *Simulator) FadeOutCheck() []engine.Change {
+	st := s.engine.State()
+	if s.llm == nil {
+		return nil // 无 LLM 时不淡出（避免 dry-run 误伤）
+	}
+	var changes []engine.Change
+	for name, ent := range st.Entities {
+		if name == s.heroName || ent.Status != "active" {
+			continue
+		}
+		tier, _ := ent.Extra["tier"].(string)
+		if tier == "walkon" || tier == "" {
+			continue // 龙套/未知层级不参与淡出
+		}
+		lastSeen, _ := ent.Extra["last_seen_day"].(float64)
+		// 出场不足 15 天（还在新鲜期）或 30 天内见过 → 不淡出
+		if int(lastSeen) <= 0 || s.day-int(lastSeen) < 30 {
+			continue
+		}
+		changes = append(changes,
+			engine.Change{Path: "entities." + name + ".status", Op: "set", Value: "mentioned"},
+			engine.Change{Path: "entities." + name + ".extra.faded_day", Op: "set", Value: s.day},
+			engine.Change{Path: "entities." + name + ".extra.faded_reason", Op: "set", Value: "淡出视野（Day" + fmt.Sprint(s.day) + "后仅偶尔被提起）"},
+		)
+		// 主角记忆沉淀："好久没见过TA了"
+		s.mem.AddDay(s.heroName, fmt.Sprintf("%s已经很久没出现在生活里了，只在别人嘴里偶尔听到", name), "event", 0.7, s.day)
+	}
+	return changes
+}
+
 // ---------- 工具 ----------
 
 // castNames 返回当前世界角色名单（主角 + 活跃NPC），用于生成/维护人设档案
+// 分层：core/support 参与建档；walkon（龙套）不建档不占记忆
 func (s *Simulator) castNames() []string {
 	var names []string
 	seen := map[string]bool{}
@@ -263,6 +314,9 @@ func (s *Simulator) castNames() []string {
 			continue
 		}
 		if ent.Status == "active" || ent.Alive {
+			if tier, _ := ent.Extra["tier"].(string); tier == "walkon" {
+				continue // 龙套不建档
+			}
 			names = append(names, name)
 		}
 	}
