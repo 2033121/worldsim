@@ -1,7 +1,0 @@
-{
-  "api_key": "",
-  "base_url": "",
-  "model": "",
-  "http_timeout_seconds": 300,
-  "context_budget_tokens": 300000
-}
