@@ -2,6 +2,22 @@
 
 本项目所有重要变更都记录在此。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [1.3.2] - 2026-08-05
+
+### 🔧 维护与更新
+- **依赖全面升级**：三个前端（`worldapp`/`worldweb`/`frontend`）执行 `npm install` + `npm update`，升级至最新兼容版本（Vite 5.4.21 / daisyUI 5.7.16 / Svelte 4.2.x），并重建所有 embed 产物
+- **embed 产物同步**：`uiteg/`（统一前端 48092）、`wsweb/`（世界控制台 48091）、`static/`（小说服务 48090）全部重建并同步最新构建，随二进制分发
+- **仓库治理**：`.gitignore` 新增本地编译二进制（`worldsim_bin`/`worldsim-linux`/`worldsim_linux`）与 `worldweb/dist/` 忽略项；`worldsim_bin`（15MB 二进制）解除 git 跟踪，二进制不再入库（Docker 从源码构建）
+- **技能卡重命名**：`kc-skill-240/241` 文件名规范化（`·` → `_`，漫剧适配·战斗场景视觉化 / 场景空间设计），内容微调，embed 目录整包加载不受影响
+- **新增源文件入库**：`worldweb/index.html`、`.mcp.json`（IDE MCP 接入配置）、`scripts/ocr.ps1`（Windows 系统 OCR 工具）
+- **测试脚本健壮化**：`test_backend_api.py` 章节号参数化（12→动态第1章）；`test_writing_edit.py` 章节列表断言改为项目无关（兼容多个测试项目标题）
+
+### ✅ 验证
+- Go 编译 `go build ./...` 通过，`go test ./...` 全绿
+- 三前端 `npm run build` 全部成功
+- Docker 镜像重建 + 容器重启健康，48090/48091/48092 三端口均返回 200 且 serve 最新前端资源
+- 后端 API 测试 7/7、前端导航/语言 13/13、写作编辑 8/8、语言持久化 PASS
+
 ## [1.3.1] - 2026-08-04
 
 ### ✨ 新增

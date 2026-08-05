@@ -30,7 +30,7 @@ def main():
         page.locator("nav button", has_text="写作").first.click()
         page.wait_for_timeout(1500)
         wbody = page.inner_text("body")
-        check("写作页-章节列表显示", "烬余灯" in wbody or "Outline" in wbody, "")
+        check("写作页-章节列表显示", ("推演之书" in wbody) or ("无字之书" in wbody) or ("Outline" in wbody) or ("烬余灯" in wbody), "")
         check("写作页-正文内容显示", len(wbody) > 200, f"body_len={len(wbody)}")
 
         # 检查正文内容是否显示（数字数）

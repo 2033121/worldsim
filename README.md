@@ -20,23 +20,33 @@
 - **时间回退**：快照制存档，剧情跑偏/卡死随时回退到任意锚点重新演化
 - **去AI味**：886+ 条真实网文示范素材库 + 六层写作方法论注入（记忆钉/冲突钩子/伏笔/感官五维/视角三不/高频词禁用）
 - **双控制入口**：WebUI 可视化控制台（浏览器操作）+ 沙盒包 API（AI 对话驱动）
+- **统一前端入口**：浏览器式导航外壳（多标签/地址栏/前进后退/书签/命令面板 Ctrl+K/明暗主题），一键切换小说创作与世界模拟
+- **题材研究智能体**：联网搜索热门题材 + 读取附件 → 产出 2-3 个候选对比方案 / 世界书方向 / 题材卡片，再引导建世界
+- **联网搜索 & 参考资料**：SearXNG 自托管搜索 + 世界参考资料附件上传，注入所有 LLM 上下文
 - **单二进制**：Go embed WebUI，零外部依赖，ARM64/Android 直接跑
 
 ## 🏗️ 架构
 
 ```
-WorldSim（端口 48091）
-├── State Engine（事件溯源：event_log.jsonl + world_state.json + Replay）
-├── Simulator（多Agent调度：事件→感知→主角决策→GM裁决→NPC→记录）
-│   ├── GM Agent        世界书裁决/段落规划（导演）
-│   ├── Event Agent     事件生成（B5事件谱：冲突/奇遇/生活切片…）
-│   ├── Protagonist     三问决策（价值/能力/世界线）→ 记忆沉淀
-│   ├── NPC 互动        Init→Act→React 对话链
-│   └── 伏笔账本        埋设/成熟/回收全周期
-├── 世界书体系          _template.md 通用骨架 + themes/ 15主题包 + B5事件谱
-├── 就绪度             arcs/drama/foreshadows/tension 四指标
-├── 时间回退            snapshots/ 快照目录（文件复制制）
-└── WebUI              单文件控制台（决策翻案/循环开关/回退/小说阅读）
+WorldSim
+├── 统一前端入口 :48092（浏览器式导航外壳 + API 网关，推荐访问）
+│   ├── 小说创作应用（代理到 48090）
+│   └── 世界模拟控制台（代理到 48091）
+├── 小说创作服务 :48090（show-me-the-story 流水线）
+├── 世界模拟服务 :48091
+│   ├── State Engine（事件溯源：event_log.jsonl + world_state.json + Replay）
+│   ├── Simulator（多Agent调度：事件→感知→主角决策→GM裁决→NPC→记录）
+│   │   ├── GM Agent        世界书裁决/段落规划（导演）
+│   │   ├── Event Agent     事件生成（B5事件谱：冲突/奇遇/生活切片…）
+│   │   ├── Protagonist     三问决策（价值/能力/世界线）→ 记忆沉淀
+│   │   ├── NPC 互动        Init→Act→React 对话链
+│   │   └── 伏笔账本        埋设/成熟/回收全周期
+│   ├── 世界书体系          _template.md 通用骨架 + themes/ 15主题包 + B5事件谱
+│   ├── 就绪度             arcs/drama/foreshadows/tension 四指标
+│   ├── 时间回退            snapshots/ 快照目录（文件复制制）
+│   ├── 题材研究 Agent     联网搜索 → 候选对比 / 世界书方向 / 题材卡片
+│   └── 联网搜索            SearXNG（docker-compose 附带）
+└── WebUI              统一前端（Tab 切换小说/世界控制台）
 ```
 
 ## 🚀 快速开始
@@ -68,11 +78,12 @@ go build -o worldsim .
 
 ```bash
 ./worldsim /path/to/data-dir
+# 统一前端入口: http://localhost:48092（推荐，浏览器式导航）
 # 世界模拟服务: http://localhost:48091
 # 小说创作服务:  http://localhost:48090
 ```
 
-浏览器打开 `http://localhost:48091` 即控制台：建世界（选主题包）→ 初始化 → 开循环 → 等就绪 → 生成小说。
+浏览器打开 `http://localhost:48092` 即浏览器式导航外壳：首页点击进入小说创作或世界模拟控制台，建世界（选主题包或研究引导）→ 初始化 → 开循环 → 等就绪 → 生成小说。
 
 ### 4. 用 API 驱动（一行跑通）
 
@@ -136,13 +147,21 @@ WorldSim 提供标准 MCP Server（`worldsim-mcp/server.py`，零依赖），可
 
 ```
 worldsim/
-├── main.go            服务入口（双端口：48090小说 / 48091世界模拟）
-├── wsweb/             WebUI 单文件控制台（embed 进二进制）
+├── main.go            服务入口（三端口：48092统一 / 48091世界模拟 / 48090小说）
+├── worldapp/          统一前端源码（Svelte+Vite+Tailwind+DaisyUI，浏览器式导航外壳）
+├── worldweb/          世界模拟控制台前端源码
+├── frontend/          小说创作前端源码
+├── uiteg/             统一前端构建产物（embed）
+├── wsweb/             世界控制台构建产物（embed）
+├── static/            小说前端构建产物（embed）
 ├── internal/
 │   ├── engine/        State Engine（事件溯源/提案/重放/软规则）
 │   ├── sim/           多Agent模拟器（事件/决策/NPC/伏笔/记忆/快照/就绪度）
 │   ├── worldbook/     世界书解析 + 主题包 + LLM世界书生成
-│   ├── llm/           分层模型调用 + token 追踪 + 前缀缓存统计
+│   ├── research/      题材研究智能体（热门题材/世界书方向/题材卡片）
+│   ├── attach/        世界参考资料附件管理
+│   ├── search/        SearXNG 联网搜索后端
+│   ├── llm/           分层模型调用 + token 追踪 + 前缀缓存统计 + 工具调用
 │   ├── novel/         小说写手（素材投喂/章节规划/去AI味铁律）
 │   └── config/        配置加载
 ├── worldbooks/        世界书池（模板+主题包+实例）

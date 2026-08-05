@@ -20,6 +20,12 @@ worldsim_plugin.zip
 *.out
 *.test
 
+# ===== 本地编译二进制（不入库，Docker 从源码构建）=====
+worldsim_bin
+worldsim-linux
+worldsim_linux
+worldsim_windows*
+
 # ===== Go =====
 /dist/
 /bin/
@@ -44,3 +50,4 @@ node_modules/
 frontend/dist/
 frontend/node_modules/
 worldweb/node_modules/
+worldweb/dist/

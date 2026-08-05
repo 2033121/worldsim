@@ -20,8 +20,9 @@ def check(name, cond, detail=""):
     results.append((name, bool(cond)))
     print(f"[{'PASS' if cond else 'FAIL'}] {name} {detail}")
 
-# 1. 获取章节块
-st, body = req("GET", "/api/chapters/12")
+# 1. 获取章节块（用第1章；当前选中项目需已生成章节）
+num = "1"
+st, body = req("GET", f"/api/chapters/{num}")
 d = json.loads(body)
 blocks = d.get("blocks") or []
 check("块编辑-获取章节块", len(blocks) > 0, f"blocks={len(blocks)}")
@@ -30,10 +31,10 @@ if blocks:
     orig = blocks[0]["text"]
     # 2. 修改块
     new_content = orig + "\n（块编辑测试 - 追加）"
-    st2, body2 = req("PUT", f"/api/chapters/12/blocks/{bid}", {"text": new_content})
+    st2, body2 = req("PUT", f"/api/chapters/{num}/blocks/{bid}", {"text": new_content})
     check("块编辑-保存修改", st2 in (200, 202), f"HTTP={st2}")
     # 3. 恢复块
-    st3, body3 = req("PUT", f"/api/chapters/12/blocks/{bid}", {"text": orig})
+    st3, body3 = req("PUT", f"/api/chapters/{num}/blocks/{bid}", {"text": orig})
     check("块编辑-恢复原内容", st3 in (200, 202), f"HTTP={st3}")
 
 # 4. 配置保存
