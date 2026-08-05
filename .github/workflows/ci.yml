@@ -9,7 +9,7 @@ jobs:
   build-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -29,7 +29,7 @@ jobs:
   mcp-syntax:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: MCP server 语法检查
         run: python3 -m py_compile worldsim-mcp/server.py && echo "MCP syntax OK"
       - name: MCP 协议自检（mock initialize + tools/list）
