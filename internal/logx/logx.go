@@ -125,20 +125,20 @@ type Metrics struct {
 	mu sync.Mutex
 
 	// LLM 调用
-	LLMCalls      int64   // 总调用次数
-	LLMFailures   int64   // 失败次数
-	LLMDryRuns    int64   // dry-run 兜底次数（事件生成失败走模板）
-	LLMTotalMS    int64   // 累计耗时(ms)
-	LLMLastErr    string  // 最近一次错误
-	LLMLastErrDay int     // 最近一次错误发生日
-	LLMConsecFail int     // 连续失败次数（自动修复用）
+	LLMCalls      int64  // 总调用次数
+	LLMFailures   int64  // 失败次数
+	LLMDryRuns    int64  // dry-run 兜底次数（事件生成失败走模板）
+	LLMTotalMS    int64  // 累计耗时(ms)
+	LLMLastErr    string // 最近一次错误
+	LLMLastErrDay int    // 最近一次错误发生日
+	LLMConsecFail int    // 连续失败次数（自动修复用）
 
 	// 世界推进
-	LastSimDay   int     // 最近成功推进到的 day
-	LastSimOK    bool    // 最近一次模拟是否成功（非 dry-run）
-	EventGenOK   int64   // 事件生成成功次数
-	EventGenFail int64   // 事件生成失败次数
-	StartTime    int64   // 进程启动时间戳
+	LastSimDay   int   // 最近成功推进到的 day
+	LastSimOK    bool  // 最近一次模拟是否成功（非 dry-run）
+	EventGenOK   int64 // 事件生成成功次数
+	EventGenFail int64 // 事件生成失败次数
+	StartTime    int64 // 进程启动时间戳
 }
 
 var metrics = &Metrics{StartTime: time.Now().Unix()}
@@ -201,18 +201,18 @@ func (m *Metrics) Snapshot() map[string]any {
 		rate = float64(m.LLMCalls-m.LLMFailures) / float64(m.LLMCalls) * 100
 	}
 	return map[string]any{
-		"llm_calls":         m.LLMCalls,
-		"llm_failures":      m.LLMFailures,
-		"llm_success_rate":  round1(rate),
-		"llm_dry_runs":      m.LLMDryRuns,
-		"llm_avg_ms":        avg(m.LLMTotalMS, m.LLMCalls),
-		"llm_last_err":      m.LLMLastErr,
-		"llm_consec_fail":   m.LLMConsecFail,
-		"event_gen_ok":      m.EventGenOK,
-		"event_gen_fail":    m.EventGenFail,
-		"last_sim_day":      m.LastSimDay,
-		"last_sim_ok":       m.LastSimOK,
-		"uptime_seconds":    time.Now().Unix() - m.StartTime,
+		"llm_calls":        m.LLMCalls,
+		"llm_failures":     m.LLMFailures,
+		"llm_success_rate": round1(rate),
+		"llm_dry_runs":     m.LLMDryRuns,
+		"llm_avg_ms":       avg(m.LLMTotalMS, m.LLMCalls),
+		"llm_last_err":     m.LLMLastErr,
+		"llm_consec_fail":  m.LLMConsecFail,
+		"event_gen_ok":     m.EventGenOK,
+		"event_gen_fail":   m.EventGenFail,
+		"last_sim_day":     m.LastSimDay,
+		"last_sim_ok":      m.LastSimOK,
+		"uptime_seconds":   time.Now().Unix() - m.StartTime,
 	}
 }
 

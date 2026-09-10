@@ -22,11 +22,12 @@ type WorldInitPlan struct {
 		Name     string         `json:"name"`
 		Location string         `json:"location"`
 		Job      string         `json:"job"`
-		Money    any            `json:"money"`  // 兼容字符串/数字（LLM可能输出"12"或"五枚银币"）
-		Health   any            `json:"health"` // 同上
+		Money    any            `json:"money"`   // 兼容字符串/数字（LLM可能输出"12"或"五枚银币"）
+		Health   any            `json:"health"`  // 同上
 		Profile  string         `json:"profile"` // 一句话现状（注入 extra.profile）
 		Memory   string         `json:"memory"`  // 初始记忆（他记得什么）
 		Stats    map[string]any `json:"stats"`   // 世界书驱动的动态属性集
+		Assets   map[string]any `json:"assets"`  // 资产表（键与值由世界书/主题驱动，随剧情变化）
 	} `json:"protagonist"`
 	NPCs []struct {
 		Name     string         `json:"name"`
@@ -127,6 +128,10 @@ func (p *WorldInitPlan) Changes(hero string) []engine.Change {
 	// 主角 stats（世界书驱动的动态属性集）
 	for k, v := range p.Protagonist.Stats {
 		ch = append(ch, engine.Change{Path: "entities." + hero + ".stats." + k, Op: "set", Value: v})
+	}
+	// 主角 assets（资产表；值统一转数值，供 bridge/前端消费）
+	for k, v := range p.Protagonist.Assets {
+		ch = append(ch, engine.Change{Path: "entities." + hero + ".assets." + k, Op: "set", Value: numOrZero(v)})
 	}
 	// 常驻 NPC
 	for _, n := range p.NPCs {

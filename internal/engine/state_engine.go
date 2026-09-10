@@ -22,12 +22,12 @@ import (
 // ---------- 世界状态（§3.2 schema） ----------
 
 type WorldState struct {
-	Revision   int                  `json:"revision"`
-	Day        int                  `json:"day"`
-	Time       string               `json:"time"`
-	Weather    string               `json:"weather"`
-	WorldLevel WorldLevel           `json:"world_level"`
-	Entities   map[string]Entity    `json:"entities"`
+	Revision   int               `json:"revision"`
+	Day        int               `json:"day"`
+	Time       string            `json:"time"`
+	Weather    string            `json:"weather"`
+	WorldLevel WorldLevel        `json:"world_level"`
+	Entities   map[string]Entity `json:"entities"`
 }
 type WorldLevel struct {
 	GlobalEvents    []string            `json:"global_events"`
@@ -41,11 +41,11 @@ type WorldLevel struct {
 // Location 地点：有状态的场景对象（会随剧情变化）
 type Location struct {
 	Name     string `json:"name"`
-	Type     string `json:"type"`    // 城区/建筑/交通/自然/秘境
-	State    string `json:"state"`   // 正常/封禁/毁坏/繁荣/衰败/污染/新开放
-	Note     string `json:"note"`    // 地点记忆（发生过的变化）
+	Type     string `json:"type"`             // 城区/建筑/交通/自然/秘境
+	State    string `json:"state"`            // 正常/封禁/毁坏/繁荣/衰败/污染/新开放
+	Note     string `json:"note"`             // 地点记忆（发生过的变化）
 	Senses   string `json:"senses,omitempty"` // 感官档案：声音/气味/触感/光线（按本世界规则生成，写手写场景直接用）
-	SinceDay int    `json:"since_day"` // 登记日
+	SinceDay int    `json:"since_day"`        // 登记日
 }
 
 type TensionOverride struct {
@@ -56,9 +56,9 @@ type TensionOverride struct {
 }
 
 type Faction struct {
-	Visibility   string   `json:"visibility"` // public | hidden
-	Stance       string   `json:"stance"`
-	Power        float64  `json:"power"`
+	Visibility    string   `json:"visibility"` // public | hidden
+	Stance        string   `json:"stance"`
+	Power         float64  `json:"power"`
 	RecentActions []string `json:"recent_actions"`
 }
 
@@ -74,13 +74,17 @@ type Entity struct {
 	// Stats 世界书驱动的动态属性集：属性名/单位/数值由世界书的力量体系与资源体系决定，
 	// 不属于引擎固定字段（引擎不硬编码任何具体属性名，只做通用读写）。
 	Stats map[string]any `json:"stats,omitempty"`
+
+	// Assets资产表：键与值均由世界书/主题包驱动（现金/灵石/物资/弹药…），
+	//供世界→小说播种（bridge）等消费方读取，引擎不硬编码任何资产名。
+	Assets map[string]any `json:"assets,omitempty"`
 }
 
 // ---------- 状态变更提案（§1.1） ----------
 
 type Change struct {
-	Path  string `json:"path"`            // e.g. "entities.protagonist.money"
-	Op    string `json:"op"`              // add | set | del
+	Path  string `json:"path"` // e.g. "entities.protagonist.money"
+	Op    string `json:"op"`   // add | set | del
 	Value any    `json:"value,omitempty"`
 }
 

@@ -168,7 +168,9 @@ func collectCharacters(st *engine.WorldState) []CharacterInfo {
 		}
 		if len(ent.Assets) > 0 {
 			for k, v := range ent.Assets {
-				ci.Abilities += fmt.Sprintf("；%s=%.0f", k, v)
+				if f, ok := v.(float64); ok {
+					ci.Abilities += fmt.Sprintf("；%s=%.0f", k, f)
+				}
 			}
 		}
 		out = append(out, ci)

@@ -2,8 +2,9 @@
 // 魔改自 Nigh/show-me-the-story（Go 单二进制 + WebUI，零外部依赖）
 //
 // 双端口架构：
-//   :48090 小说创作服务（复用 show-me-the-story 的小说化流水线）
-//   :48091 世界模拟服务（WorldSim State Engine + 调度器，新增）
+//
+//	:48090 小说创作服务（复用 show-me-the-story 的小说化流水线）
+//	:48091 世界模拟服务（WorldSim State Engine + 调度器，新增）
 package main
 
 import (
