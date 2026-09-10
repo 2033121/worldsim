@@ -1,6 +1,6 @@
 # WorldSim · Operit 插件包
 
-> **版本**：1.2.0（2026-08-04）· 兼容：Operit（Android / ARM64）
+> **版本**：1.4.0（2026-08-05）· 兼容：Operit（Android / ARM64）
 > 多Agent世界模拟器 + 网文生产引擎：创建任意题材世界（15主题包一键生成世界书）→ 驱动世界演化 → 自动改写小说。
 > **双控制入口**：AI 对话驱动（worldsim 沙盒包）+ 浏览器可视化控制台（WebUI）。
 
@@ -10,7 +10,7 @@
 worldsim/  ← 插件包根目录（/sdcard/Download/Operit/plugins/worldsim/）
 ├── worldsim         世界模拟服务二进制（ARM64，内置 WebUI）
 ├── run.sh           一键启动/重启服务（自动处理 sdcard 无执行权限问题）
-├── worldsim.js      Operit 沙盒包源码（25 个 AI 控制工具，安装到 packages/）
+├── worldsim.js      Operit 沙盒包源码（26 个 AI 控制工具，安装到 packages/）
 ├── SKILL.md         AI 使用手册（安装到 skills/worldsim/）
 ├── README.md        本说明
 ├── TESTING.md       验收清单（装完照做一遍即可确认全部功能）
@@ -51,7 +51,7 @@ worldsim/  ← 插件包根目录（/sdcard/Download/Operit/plugins/worldsim/）
 | 入口 | 谁用 | 能力 |
 |---|---|---|
 | **WebUI 控制台** `http://127.0.0.1:48091` | 人 | 世界状态 / **决策翻案改选** / 循环开始停止 / 就绪度 / **时间回退** / 编年史 / 记忆 / 伏笔 / 小说阅读 / 建世界（选主题包）/ LLM 配置 / token 统计 |
-| **worldsim 沙盒包**（25 工具） | AI | world_list/create/init/run_day/loop_start/loop_stop/loop_status/readiness/decisions/decision_resolve/chronicle/memories/foreshadows/thinking/tokens/novel_list/novel_generate/novel_chapter/themes/webui/snapshots/snapshot/rewind |
+| **worldsim 沙盒包**（26 工具） | AI | world_list/create/init/run_day/loop_start/loop_stop/loop_status/readiness/decisions/decision_resolve/chronicle/memories/foreshadows/thinking/tokens/novel_list/novel_generate/seed_novel/novel_chapter/themes/webui/snapshots/snapshot/rewind |
 
 ## ✅ 快速验收（装完跑一遍，约 10 分钟）
 
@@ -87,5 +87,6 @@ worldsim/  ← 插件包根目录（/sdcard/Download/Operit/plugins/worldsim/）
 
 ## 📜 更新日志
 
+- **1.4.0**：联网搜索（内置 Tavily）接入写作页搜素材；世界→小说直接播种（零 LLM 调用）；LLM 全局用量统计（TokenStats）；技能注入写作/大纲
 - **1.2.0**：修复 token 缓存命中率双计 bug；世界书生成/初始化/模拟改为独立 context（客户端断开不再中断）；世界书生成加重试3次；时间回退机制上线；WebUI 控制台大升级
 - **1.1.0**：插件包成型（沙盒包 22 工具 + Skill + WebUI + 15 主题包）

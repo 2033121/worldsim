@@ -17,15 +17,22 @@ import (
 	"worldsim/internal/i18n"
 	"worldsim/internal/llm"
 	"worldsim/internal/prose"
+	"worldsim/internal/search"
 	"worldsim/internal/sse"
 	"worldsim/internal/story"
 )
+
+// searchMaxResults 是 HTTP 搜索接口单次返回条数上限。
+const searchMaxResults = 10
 
 type Handlers struct {
 	apiCfg     *config.APIConfig
 	apiCfgPath string
 	logger     *sse.LogBroadcaster
 	version    string
+
+	// searchProv 联网搜索后端（由 main 注入；nil 表示未启用搜索）。
+	searchProv search.Provider
 
 	// Project management
 	progDir     string
@@ -75,6 +82,14 @@ func NewHandlers(apiCfg *config.APIConfig, apiCfgPath string, logger *sse.LogBro
 
 func (h *Handlers) storysDir() string {
 	return filepath.Join(h.progDir, "storys")
+}
+
+// recoverTask 供后台任务 goroutine 兜底：后台 goroutine 无 HTTP 中间件保护，
+// 需在入口 defer 它，panic 时不崩进程、只记日志。
+func (h *Handlers) recoverTask(span string) {
+	if r := recover(); r != nil {
+		h.logger.ErrorKey("log.task_panic", fmt.Sprintf("[%s] panic: %v", span, r))
+	}
 }
 
 // projectDir returns the current project's directory (empty if no project selected).
@@ -175,6 +190,23 @@ func (h *Handlers) writeJSON(w http.ResponseWriter, code int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(v)
+}
+
+// GetLLMStats GET /api/llm/stats — 实时全局 LLM 用量总览（进程启动时间 + 各环节聚合 + 缓存 + 费用估算）。
+func (h *Handlers) GetLLMStats(w http.ResponseWriter, r *http.Request) {
+	h.writeJSON(w, http.StatusOK, llm.StatsJSON())
+}
+
+// GetLLMStatsHistory GET /api/llm/stats/history?window=hour|day — 按时间窗的 token 消耗历史。
+func (h *Handlers) GetLLMStatsHistory(w http.ResponseWriter, r *http.Request) {
+	win := r.URL.Query().Get("window")
+	if win != "hour" && win != "day" {
+		win = "hour"
+	}
+	h.writeJSON(w, http.StatusOK, map[string]any{
+		"window":  win,
+		"records": llm.LoadHistory(win),
+	})
 }
 
 func (h *Handlers) tryStartTask() bool {
@@ -636,6 +668,7 @@ func (h *Handlers) PostChapterBlockRevise(w http.ResponseWriter, r *http.Request
 	}
 
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("block_revision")
 		ctx := h.taskCtx
@@ -720,6 +753,7 @@ func (h *Handlers) PostOutlineGenerate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 
 		// 自动清除旧的大纲（仅 pending 章节，保留 accepted 的通过正常流程处理）
@@ -751,7 +785,7 @@ func (h *Handlers) PostOutlineGenerate(w http.ResponseWriter, r *http.Request) {
 		ctx := h.taskCtx
 
 		h.logger.InfoKey("log.outline_generating")
-		err := story.GenerateOutlineAction(ctx, h.apiCfg, h.cfg, h.state, h.settings, h.progressPath, h.cfgPath, h.logger)
+		err := story.GenerateOutlineAction(ctx, h.apiCfg, h.cfg, h.state, h.settings, h.progressPath, h.cfgPath, h.skills, h.logger)
 
 		if err != nil {
 			if ctx.Err() != nil {
@@ -813,12 +847,13 @@ func (h *Handlers) PostOutlineRevise(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("outline_revision")
 		ctx := h.taskCtx
 
 		h.logger.InfoKey("log.outline_revising")
-		err := story.ReviseOutlineAction(ctx, h.apiCfg, h.cfg, h.state, h.settings, h.progressPath, h.cfgPath, body.Feedback, h.logger)
+		err := story.ReviseOutlineAction(ctx, h.apiCfg, h.cfg, h.state, h.settings, h.progressPath, h.cfgPath, body.Feedback, h.skills, h.logger)
 
 		if err != nil {
 			if ctx.Err() != nil {
@@ -908,6 +943,7 @@ func (h *Handlers) PostChapterGenerate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("chapter_generation")
 		ctx := h.taskCtx
@@ -920,7 +956,7 @@ func (h *Handlers) PostChapterGenerate(w http.ResponseWriter, r *http.Request) {
 			}
 
 			h.logger.InfoKey("log.chapter_writing", chIdx+1)
-			err := story.GenerateChapterAction(ctx, h.apiCfg, h.cfg, h.state, h.progressPath, h.settings, h.logger)
+			err := story.GenerateChapterAction(ctx, h.apiCfg, h.cfg, h.state, h.progressPath, h.settings, h.skills, h.logger)
 
 			if err != nil {
 				if ctx.Err() != nil {
@@ -1042,6 +1078,7 @@ func (h *Handlers) PostForeshadowOutlineCheck(w http.ResponseWriter, r *http.Req
 	}
 
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("foreshadow_outline_check")
 		ctx := h.taskCtx
@@ -1138,6 +1175,7 @@ func (h *Handlers) PostChapterRevise(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("chapter_revision")
 		ctx := h.taskCtx
@@ -1189,6 +1227,7 @@ func (h *Handlers) PostChapterReviseSpecific(w http.ResponseWriter, r *http.Requ
 	}
 
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("chapter_revision")
 		ctx := h.taskCtx
@@ -1238,6 +1277,7 @@ func (h *Handlers) PostChaptersSmoothTransitions(w http.ResponseWriter, r *http.
 	}
 
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("smooth_transitions")
 		ctx := h.taskCtx
@@ -1373,6 +1413,7 @@ func (h *Handlers) PostSettingsReconcile(w http.ResponseWriter, r *http.Request)
 	}
 
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("settings_reconciliation")
 		ctx := h.taskCtx
@@ -1481,6 +1522,36 @@ func (h *Handlers) GetVersion(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusOK, map[string]string{"version": h.version})
 }
 
+// PostSearch POST /api/search — 联网搜索素材（作者在写作页直接搜）。
+// body: {"query":"...","max":5,"language":"zh-CN"}；返回 {"results":[{title,url,content,engine}]}
+func (h *Handlers) PostSearch(w http.ResponseWriter, r *http.Request) {
+	if h.searchProv == nil {
+		h.writeJSON(w, http.StatusBadRequest, map[string]string{"error": "搜索功能未启用（未配置 wsdata/search.json 或已关闭）"})
+		return
+	}
+	var req struct {
+		Query    string `json:"query"`
+		Max      int    `json:"max"`
+		Language string `json:"language"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Query) == "" {
+		h.writeJSON(w, http.StatusBadRequest, map[string]string{"error": "缺少 query 字段"})
+		return
+	}
+	if req.Max <= 0 {
+		req.Max = 5
+	}
+	if req.Max > searchMaxResults {
+		req.Max = searchMaxResults
+	}
+	results, err := h.searchProv.Search(r.Context(), strings.TrimSpace(req.Query), req.Max, req.Language)
+	if err != nil {
+		h.writeJSON(w, http.StatusBadGateway, map[string]string{"error": "搜索失败，" + err.Error()})
+		return
+	}
+	h.writeJSON(w, http.StatusOK, map[string]any{"results": results})
+}
+
 func (h *Handlers) GetStatus(w http.ResponseWriter, r *http.Request) {
 	lang := i18n.LangZH
 	if h.cfg != nil {
@@ -1542,6 +1613,7 @@ func (h *Handlers) PostForeshadowsSuggest(w http.ResponseWriter, r *http.Request
 	}
 
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("foreshadow_suggest")
 		ctx := h.taskCtx
@@ -1783,6 +1855,7 @@ func (h *Handlers) PostImportStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("import_pipeline")
 		ctx := h.taskCtx
@@ -1806,6 +1879,7 @@ func (h *Handlers) PostImportResume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("import_pipeline")
 		ctx := h.taskCtx
@@ -1863,12 +1937,13 @@ func (h *Handlers) PostOutlineGenerateContinuation(w http.ResponseWriter, r *htt
 	}
 
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("continuation_outline")
 		ctx := h.taskCtx
 
 		h.logger.InfoKey("log.continuation_outline_generating")
-		err := story.GenerateContinuationOutline(ctx, h.apiCfg, h.cfg, h.state, h.settings, body.ChapterCount, h.progressPath, h.logger)
+		err := story.GenerateContinuationOutline(ctx, h.apiCfg, h.cfg, h.state, h.settings, body.ChapterCount, h.progressPath, h.skills, h.logger)
 
 		if err != nil {
 			if ctx.Err() != nil {
@@ -2349,6 +2424,7 @@ func (h *Handlers) PostChapterPolish(w http.ResponseWriter, r *http.Request) {
 	idx := chapterIdx
 
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("chapter_polish")
 		ctx := h.taskCtx
@@ -2457,6 +2533,7 @@ func (h *Handlers) PostPostProcessDiagnose(w http.ResponseWriter, r *http.Reques
 	}
 
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("postprocess_diagnose")
 		ctx := h.taskCtx
@@ -2494,6 +2571,7 @@ func (h *Handlers) PostPostProcessConsistency(w http.ResponseWriter, r *http.Req
 	}
 
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("postprocess_consistency")
 		ctx := h.taskCtx
@@ -2535,6 +2613,7 @@ func (h *Handlers) PostPostProcessRoadmap(w http.ResponseWriter, r *http.Request
 	}
 
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("postprocess_roadmap")
 		ctx := h.taskCtx
@@ -2600,6 +2679,7 @@ func (h *Handlers) PostPostProcessExecute(w http.ResponseWriter, r *http.Request
 	}
 
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("postprocess_execute")
 		ctx := h.taskCtx
@@ -2804,6 +2884,7 @@ func (h *Handlers) PostChatMessage(w http.ResponseWriter, r *http.Request) {
 	h.lastChatMessage = req.Content
 
 	go func() {
+		defer h.recoverTask("task")
 		// defer 确保任何错误路径都会释放任务锁，否则后续所有任务将永久 409
 		defer h.endTask()
 		h.logger.TaskStart("chat_message")
@@ -2851,6 +2932,7 @@ func (h *Handlers) PostChatMessage(w http.ResponseWriter, r *http.Request) {
 				}
 				childCtx := h.taskCtx
 				go func() {
+					defer h.recoverTask(taskName)
 					defer h.endTask()
 					h.logger.TaskStart(taskName)
 					err := fn(childCtx)
@@ -2954,6 +3036,7 @@ func (h *Handlers) PostArcSkeleton(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("arc_skeleton")
 		ctx := h.taskCtx
@@ -2997,12 +3080,13 @@ func (h *Handlers) PostArcOutline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("arc_outline")
 		ctx := h.taskCtx
 		ai := story.ArcIndexByID(h.state, arcID)
 		h.logger.InfoKey("log.arc_outline_generating", ai+1)
-		err := story.GenerateArcOutlineAction(ctx, h.apiCfg, h.cfg, h.state, h.settings, arcID, body.Requirements, h.progressPath, h.logger)
+		err := story.GenerateArcOutlineAction(ctx, h.apiCfg, h.cfg, h.state, h.settings, arcID, body.Requirements, h.progressPath, h.skills, h.logger)
 		if err != nil {
 			if ctx.Err() != nil {
 				h.logger.WarnKey("log.arc_task_cancelled")
@@ -3037,10 +3121,11 @@ func (h *Handlers) PostArcAppend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	go func() {
+		defer h.recoverTask("task")
 		defer h.endTask()
 		h.logger.TaskStart("arc_append")
 		ctx := h.taskCtx
-		err := story.AppendArcAction(ctx, h.apiCfg, h.cfg, h.state, h.settings, body.Title, body.Goal, body.ChapterCount, h.progressPath, h.logger)
+		err := story.AppendArcAction(ctx, h.apiCfg, h.cfg, h.state, h.settings, body.Title, body.Goal, body.ChapterCount, h.progressPath, h.skills, h.logger)
 		if err != nil {
 			if ctx.Err() != nil {
 				h.logger.WarnKey("log.arc_task_cancelled")

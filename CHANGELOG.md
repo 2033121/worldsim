@@ -2,6 +2,54 @@
 
 本项目所有重要变更都记录在此。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [1.5.0] - 2026-08-05
+
+### ✨ 新增
+- **内嵌持续监测与自动修复模块（self-healing）**：`internal/selfheal` 内嵌于世界模拟服务，跟踪运行过程与错误日志，异常自动诊断根源并自主修复
+  - **四类异常监测**（15s 一轮）：LLM/API 可用性（api.json 缺失/损坏/未配置）、服务进程（48090/48091/48092 端口探活）、数据一致性（world_state.json 合法性）、模拟循环（连续 RunDay 失败/卡死）
+  - **自动修复动作**：LLM 配置缺失 → 生成 api.json 模板；模拟连续失败 → 中断异常循环防空转烧 token；数据损坏 → 回退最近快照并重建 Simulator
+  - **运行日志落盘**：`wsdata/selfheal/runtime.log`；检测/诊断/修复记录持久化到 `wsdata/selfheal/incidents.jsonl`（跨重启保留）
+  - **前端监测面板**：世界控制台新增「🛠️ 监测」Tab（`SelfHealPanel.svelte`），展示运行时长/自动修复次数/LLM 就绪状态/各项健康检查/历史 Incident 记录
+  - **监测接口**：`GET /api/selfheal/status` 与 `GET /api/selfheal/incidents`
+  - **单元测试**：`internal/selfheal/selfheal_test.go` 覆盖初始化/LLM 检测修复/数据回退/循环失败/ Incident 持久化
+
+### ✅ 验证
+- `go build ./...` 通过
+- `go test ./internal/selfheal/...` 全绿（5/5）
+
+## [1.4.0] - 2026-08-05
+
+### ✨ 新增
+- **联网搜索（内置 Tavily）**：新增 `internal/search/tavily.go`，写作页「🔍 搜素材」面板直接搜素材一键复制/打开原文；`POST /api/search` 接口 + provider 注入；docker-compose 移除自托管 SearXNG（改用内置 Tavily，无需额外容器）
+- **世界直接播种小说**：`internal/bridge` + `POST /api/world/seed-novel`，把世界书/角色/势力/近期编年史事件直接播种成小说大纲与设定，零 LLM 调用；前端「🌱 从世界播种」面板 + 世界页「📖 据此生成小说」
+- **LLM 用量统计**：全局 token 实时聚合 + hour/day 时间窗持久化（`stats_store`）+ 费用估算；`GET /api/llm/stats` / `/history`；前端 TokenStats 页 + 任务 token 徽章
+- **技能注入写作/大纲**：大纲/分卷/章节生成注入已启用技能 SOP（`FormatSkillsContent`）
+- **技能卡重命名**：5 个技能卡规范化为中文名（开篇写作SOP/章节写作SOP/修改润色SOP/数据诊断与调整SOP/武器系统描写方法论）+ `skills_test.go`
+
+### ♻️ 重构
+- `internal/bridge` 手写插入排序 `sortStrings` 改用标准库 `sort.Strings`（消除重复实现）
+- 移除 `tavily.go` 中 `language` 参数被误映射为 `topic=general` 的冗余逻辑（Tavily basic 深度无语言过滤，保留参数以符合 Provider 接口）
+
+### ✅ 验证
+- `go vet ./...` 与 `go test ./internal/...` 全绿（bridge/httpapi/llm/research/search 均 ok）
+- Docker 重建后 `/api/novel/search` 实测返回优质中文结果（engine: tavily）
+
+## [1.3.2] - 2026-08-05
+
+### 🔧 维护与更新
+- **依赖全面升级**：三个前端（`worldapp`/`worldweb`/`frontend`）执行 `npm install` + `npm update`，升级至最新兼容版本（Vite 5.4.21 / daisyUI 5.7.16 / Svelte 4.2.x），并重建所有 embed 产物
+- **embed 产物同步**：`uiteg/`（统一前端 48092）、`wsweb/`（世界控制台 48091）、`static/`（小说服务 48090）全部重建并同步最新构建，随二进制分发
+- **仓库治理**：`.gitignore` 新增本地编译二进制（`worldsim_bin`/`worldsim-linux`/`worldsim_linux`）与 `worldweb/dist/` 忽略项；`worldsim_bin`（15MB 二进制）解除 git 跟踪，二进制不再入库（Docker 从源码构建）
+- **技能卡重命名**：`kc-skill-240/241` 文件名规范化（`·` → `_`，漫剧适配·战斗场景视觉化 / 场景空间设计），内容微调，embed 目录整包加载不受影响
+- **新增源文件入库**：`worldweb/index.html`、`.mcp.json`（IDE MCP 接入配置）、`scripts/ocr.ps1`（Windows 系统 OCR 工具）
+- **测试脚本健壮化**：`test_backend_api.py` 章节号参数化（12→动态第1章）；`test_writing_edit.py` 章节列表断言改为项目无关（兼容多个测试项目标题）
+
+### ✅ 验证
+- Go 编译 `go build ./...` 通过，`go test ./...` 全绿
+- 三前端 `npm run build` 全部成功
+- Docker 镜像重建 + 容器重启健康，48090/48091/48092 三端口均返回 200 且 serve 最新前端资源
+- 后端 API 测试 7/7、前端导航/语言 13/13、写作编辑 8/8、语言持久化 PASS
+
 ## [1.3.1] - 2026-08-04
 
 ### ✨ 新增

@@ -16,7 +16,7 @@ func slimEntities(ents map[string]engine.Entity) map[string]any {
 		if e.Status == "departed" {
 			continue
 		}
-		out[name] = map[string]any{
+		entry := map[string]any{
 			"location": e.Location,
 			"job":      e.Job,
 			"money":    e.Money,
@@ -24,6 +24,11 @@ func slimEntities(ents map[string]engine.Entity) map[string]any {
 			"status":   e.Status,
 			"rel":      e.Relationship,
 		}
+		// 世界书驱动的动态属性集（属性名随世界变化，引擎不预设）
+		if len(e.Stats) > 0 {
+			entry["stats"] = e.Stats
+		}
+		out[name] = entry
 	}
 	return out
 }

@@ -20,23 +20,37 @@
 - **时间回退**：快照制存档，剧情跑偏/卡死随时回退到任意锚点重新演化
 - **去AI味**：886+ 条真实网文示范素材库 + 六层写作方法论注入（记忆钉/冲突钩子/伏笔/感官五维/视角三不/高频词禁用）
 - **双控制入口**：WebUI 可视化控制台（浏览器操作）+ 沙盒包 API（AI 对话驱动）
+- **统一前端入口**：浏览器式导航外壳（多标签/地址栏/前进后退/书签/命令面板 Ctrl+K/明暗主题），一键切换小说创作与世界模拟
+- **题材研究智能体**：联网搜索热门题材 + 读取附件 → 产出 2-3 个候选对比方案 / 世界书方向 / 题材卡片，再引导建世界
+- **联网搜索 & 写作搜素材**：内置 Tavily 搜索后端（可切 SearXNG / Bing / BingHTML），写作页直接搜素材一键复制，搜索结果 + 世界参考资料注入 LLM 上下文
+- **世界直接播种小说**：把已模拟世界的世界书/角色/势力/近期编年史事件直接播种成小说大纲与设定，零 LLM 调用
+- **LLM 用量看板**：全局 token 统计（实时聚合 + 小时/天时间窗持久化历史 + 费用估算），TokenStats 页面可视化
 - **单二进制**：Go embed WebUI，零外部依赖，ARM64/Android 直接跑
 
 ## 🏗️ 架构
 
 ```
-WorldSim（端口 48091）
-├── State Engine（事件溯源：event_log.jsonl + world_state.json + Replay）
-├── Simulator（多Agent调度：事件→感知→主角决策→GM裁决→NPC→记录）
-│   ├── GM Agent        世界书裁决/段落规划（导演）
-│   ├── Event Agent     事件生成（B5事件谱：冲突/奇遇/生活切片…）
-│   ├── Protagonist     三问决策（价值/能力/世界线）→ 记忆沉淀
-│   ├── NPC 互动        Init→Act→React 对话链
-│   └── 伏笔账本        埋设/成熟/回收全周期
-├── 世界书体系          _template.md 通用骨架 + themes/ 15主题包 + B5事件谱
-├── 就绪度             arcs/drama/foreshadows/tension 四指标
-├── 时间回退            snapshots/ 快照目录（文件复制制）
-└── WebUI              单文件控制台（决策翻案/循环开关/回退/小说阅读）
+WorldSim
+├── 统一前端入口 :48092（浏览器式导航外壳 + API 网关，推荐访问）
+│   ├── 小说创作应用（代理到 48090）
+│   └── 世界模拟控制台（代理到 48091）
+├── 小说创作服务 :48090（show-me-the-story 流水线）
+├── 世界模拟服务 :48091
+│   ├── State Engine（事件溯源：event_log.jsonl + world_state.json + Replay）
+│   ├── Simulator（多Agent调度：事件→感知→主角决策→GM裁决→NPC→记录）
+│   │   ├── GM Agent        世界书裁决/段落规划（导演）
+│   │   ├── Event Agent     事件生成（B5事件谱：冲突/奇遇/生活切片…）
+│   │   ├── Protagonist     三问决策（价值/能力/世界线）→ 记忆沉淀
+│   │   ├── NPC 互动        Init→Act→React 对话链
+│   │   └── 伏笔账本        埋设/成熟/回收全周期
+│   ├── 世界书体系          _template.md 通用骨架 + themes/ 15主题包 + B5事件谱
+│   ├── 就绪度             arcs/drama/foreshadows/tension 四指标
+│   ├── 时间回退            snapshots/ 快照目录（文件复制制）
+│   ├── 题材研究 Agent     联网搜索 → 候选对比 / 世界书方向 / 题材卡片
+│   ├── 联网搜索            内置 Tavily（可切 SearXNG/Bing），写作页搜素材
+│   ├── 世界→小说播种        WorldData 直接播种大纲/角色/世界观，零 LLM 调用
+│   └── LLM 用量统计        实时聚合 + hour/day 时间窗持久化 + 费用估算
+└── WebUI              统一前端（Tab 切换小说/世界控制台，含 TokenStats 页）
 ```
 
 ## 🚀 快速开始
@@ -68,11 +82,12 @@ go build -o worldsim .
 
 ```bash
 ./worldsim /path/to/data-dir
+# 统一前端入口: http://localhost:48092（推荐，浏览器式导航）
 # 世界模拟服务: http://localhost:48091
 # 小说创作服务:  http://localhost:48090
 ```
 
-浏览器打开 `http://localhost:48091` 即控制台：建世界（选主题包）→ 初始化 → 开循环 → 等就绪 → 生成小说。
+浏览器打开 `http://localhost:48092` 即浏览器式导航外壳：首页点击进入小说创作或世界模拟控制台，建世界（选主题包或研究引导）→ 初始化 → 开循环 → 等就绪 → 生成小说。
 
 ### 4. 用 API 驱动（一行跑通）
 
@@ -118,31 +133,47 @@ WorldSim 提供标准 MCP Server（`worldsim-mcp/server.py`，零依赖），可
 
 ## 📥 下载
 
-多平台二进制 + 插件包 + MCP Server 全部见 [Releases](https://github.com/2033121/worldsim/releases)（最新 **v1.3.1**）：
+多平台二进制 + 插件包 + MCP Server 全部见 [Releases](https://github.com/2033121/worldsim/releases)（最新 **v1.4.0**）：
 
 - Linux amd64 / arm64（tar.gz）
 - Windows amd64（zip，含 run.bat 一键启动）
 - macOS amd64 / arm64（tar.gz）
-- `worldsim_plugin_v1.3.1.zip`（Operit 插件包，直接导入）
-- `worldsim-mcp-v1.3.1.zip`（Codex/Trae/Claude MCP Server，零依赖）
+- `worldsim_plugin_v1.4.0.zip`（Operit 插件包，直接导入）
+- `worldsim-mcp-v1.4.0.zip`（Codex/Trae/Claude MCP Server，零依赖）
 
 > 🔄 **发布全自动**：打 `v*` tag 即触发 GitHub Actions 交叉编译 5 平台 + 自动组装插件包/MCP 包，共 7 个资产，无需手动上传。
 
+### ✨ v1.4.0 更新亮点
+
+- **联网搜索（内置 Tavily）**：写作页「搜素材」面板一键搜索网络素材，无需再自托管 SearXNG 容器
+- **世界 → 小说直接播种**：把世界书 / 角色 / 势力 / 近期编年史事件直接播种成小说大纲与设定（零 LLM 调用）
+- **LLM 用量统计（TokenStats）**：全局 token 实时聚合 + hour/day 持久化 + 费用估算
+- **技能注入写作 / 大纲**：大纲 / 分卷 / 章节生成自动注入已启用技能 SOP
+- **MCP / Operit 升级到 26 个工具**：新增 `world_seed_novel`（世界播种小说），Codex / Trae / Operit 均可调用
+
 ## 🔌 Operit 插件包
 
-本仓库是核心源码。打包好的 **Operit 插件包**（沙盒包 25 工具 + Skill + WebUI 控制台 + 15 主题包 + 886 条风格素材 + 验收清单）以 zip 形式随 Release 分发（CI 自动组装），可直接导入 Operit 使用。
+本仓库是核心源码。打包好的 **Operit 插件包**（沙盒包 26 工具 + Skill + WebUI 控制台 + 15 主题包 + 886 条风格素材 + 验收清单）以 zip 形式随 Release 分发（CI 自动组装），可直接导入 Operit 使用。
 
 ## 📂 目录说明
 
 ```
 worldsim/
-├── main.go            服务入口（双端口：48090小说 / 48091世界模拟）
-├── wsweb/             WebUI 单文件控制台（embed 进二进制）
+├── main.go            服务入口（三端口：48092统一 / 48091世界模拟 / 48090小说）
+├── worldapp/          统一前端源码（Svelte+Vite+Tailwind+DaisyUI，浏览器式导航外壳）
+├── worldweb/          世界模拟控制台前端源码
+├── frontend/          小说创作前端源码
+├── uiteg/             统一前端构建产物（embed）
+├── wsweb/             世界控制台构建产物（embed）
+├── static/            小说前端构建产物（embed）
 ├── internal/
 │   ├── engine/        State Engine（事件溯源/提案/重放/软规则）
 │   ├── sim/           多Agent模拟器（事件/决策/NPC/伏笔/记忆/快照/就绪度）
 │   ├── worldbook/     世界书解析 + 主题包 + LLM世界书生成
-│   ├── llm/           分层模型调用 + token 追踪 + 前缀缓存统计
+│   ├── research/      题材研究智能体（热门题材/世界书方向/题材卡片）
+│   ├── attach/        世界参考资料附件管理
+│   ├── search/        SearXNG 联网搜索后端
+│   ├── llm/           分层模型调用 + token 追踪 + 前缀缓存统计 + 工具调用
 │   ├── novel/         小说写手（素材投喂/章节规划/去AI味铁律）
 │   └── config/        配置加载
 ├── worldbooks/        世界书池（模板+主题包+实例）

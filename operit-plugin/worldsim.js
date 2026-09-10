@@ -42,6 +42,7 @@
         { "name": "world_tokens", "description": { "zh": "LLM 调用统计（调用次数/缓存命中/tokens 消耗）。", "en": "LLM call stats (calls/cache hit/tokens)." }, "parameters": [] },
         { "name": "world_novel_list", "description": { "zh": "小说章节列表（已生成/待生成）。", "en": "Novel chapter list (generated/pending)." }, "parameters": [] },
         { "name": "world_novel_generate", "description": { "zh": "生成/续写小说章节（写手基于世界编年史创作，1-3分钟/章）。", "en": "Generate/continue novel chapters (writer creates from chronicle, 1-3 min/chapter)." }, "parameters": [] },
+        { "name": "world_seed_novel", "description": { "zh": "把当前激活世界直接播种成小说项目（零 LLM 调用）：世界书/角色/势力/近期事件 → 小说大纲与设定。播种后到小说服务 48090 查看/续写。", "en": "Seed the active world into a novel project (zero LLM calls): worldbook/roles/factions/recent events → outline & settings. Then view/continue on novel service 48090." }, "parameters": [ { "name": "project_name", "description": { "zh": "新小说项目名", "en": "New novel project name" }, "type": "string", "required": true }, { "name": "language", "description": { "zh": "小说语言 zh|en（默认 zh）", "en": "Novel language zh|en (default zh)" }, "type": "string", "required": false } ] },
         { "name": "world_novel_chapter", "description": { "zh": "读取某一章正文。", "en": "Read a chapter's content." }, "parameters": [ { "name": "num", "description": { "zh": "章节号", "en": "Chapter number" }, "type": "number", "required": true } ] },
         { "name": "world_themes", "description": { "zh": "列出全部主题包（创建世界时选 theme 用）。", "en": "List all theme packs (for world_create theme)." }, "parameters": [] },
         { "name": "world_webui", "description": { "zh": "返回 WorldSim 可视化控制台的访问地址（用户可在浏览器打开：世界状态/决策改选/循环开关/小说阅读）。", "en": "Return the WorldSim web console URL (world state/decision override/loop control/novel reader)." }, "parameters": [] },
@@ -52,12 +53,15 @@
 }*/
 const WorldSim = (function () {
     const BASE = 'http://127.0.0.1:48091';
+    // 小说服务（48090）：承载 /api/world/seed-novel、/api/search、/api/llm/stats 等。
+    const NOVEL_BASE = 'http://127.0.0.1:48090';
     const TIMEOUT_MS = 60000;
 
     // 基础请求：GET/POST + JSON（走宿主 http_request 工具——沙盒 client 禁止访问本地地址）
-    async function api(method, path, body) {
+    async function api(method, path, body, base) {
+        const urlBase = base || BASE;
         try {
-            const toolParams = { url: BASE + path, method };
+            const toolParams = { url: urlBase + path, method };
             if (body !== undefined) {
                 toolParams.body = JSON.stringify(body);
                 toolParams.body_type = 'json';
@@ -282,6 +286,26 @@ const WorldSim = (function () {
         return { ok: true, written: r.data.written || [], hint: '章节已生成/续写，可用 world_novel_list 查看。' };
     }
 
+    async function world_seed_novel(params) {
+        await ensureAlive();
+        const list = await api('GET', '/api/worlds');
+        let worldId = (list.data && list.data.current) || '';
+        if (!worldId && list.data && list.data.worlds && list.data.worlds.length) {
+            worldId = list.data.worlds[0].name || '';
+        }
+        if (!worldId) throw new Error('尚无世界，请先 world_create 创建世界');
+        const body = { world_id: worldId, project_name: params.project_name };
+        if (params.language) body.language = params.language;
+        const r = await api('POST', '/api/world/seed-novel', body, NOVEL_BASE);
+        if (!r.ok) throw new Error(r.data && r.data.error || '播种失败（可能项目已存在）');
+        return {
+            project_name: r.data.project_name, world_name: r.data.world_name,
+            character_count: r.data.character_count, worldview_count: r.data.worldview_count,
+            outline_chapter_count: r.data.outline_chapter_count,
+            hint: '世界已播种成小说项目，到小说服务 48090 可查看/续写。',
+        };
+    }
+
     async function world_novel_chapter(params) {
         await ensureAlive();
         const r = await api('GET', '/api/world/novel/chapter/' + params.num);
@@ -349,6 +373,7 @@ const WorldSim = (function () {
         world_tokens: (p) => wrap(world_tokens, p, '统计', '查询失败'),
         world_novel_list: (p) => wrap(world_novel_list, p, '章节列表', '查询失败'),
         world_novel_generate: (p) => wrap(world_novel_generate, p, '写作完成', '写作失败'),
+        world_seed_novel: (p) => wrap(world_seed_novel, p, '播种成功', '播种失败'),
         world_novel_chapter: (p) => wrap(world_novel_chapter, p, '章节正文', '读取失败'),
         world_themes: (p) => wrap(world_themes, p, '主题包列表', '查询失败'),
         world_webui: (p) => wrap(world_webui, p, '控制台地址', '获取失败'),
@@ -394,6 +419,7 @@ exports.world_thinking = WorldSim.world_thinking;
 exports.world_tokens = WorldSim.world_tokens;
 exports.world_novel_list = WorldSim.world_novel_list;
 exports.world_novel_generate = WorldSim.world_novel_generate;
+exports.world_seed_novel = WorldSim.world_seed_novel;
 exports.world_novel_chapter = WorldSim.world_novel_chapter;
 exports.world_themes = WorldSim.world_themes;
 exports.world_webui = WorldSim.world_webui;

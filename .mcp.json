@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "worldsim": {
+      "command": "py",
+      "args": ["${workspaceFolder}/worldsim-mcp/server.py"],
+      "env": {}
+    }
+  }
+}

@@ -12,6 +12,7 @@ import (
 
 	"worldsim/internal/engine"
 	"worldsim/internal/llm"
+	"worldsim/internal/logging"
 	"worldsim/internal/worldbook"
 )
 
@@ -24,6 +25,7 @@ import (
 type Simulator struct {
 	engine             *engine.StateEngine
 	worldDir           string
+	worldName          string // 世界名（日志归属，从 worldDir 推导）
 	day                int
 	mode               string // scene | summary | skip
 	chronicle          []ChronicleEntry
@@ -85,6 +87,7 @@ func NewSimulator(se *engine.StateEngine, worldDir string) *Simulator {
 	s := &Simulator{
 		engine:    se,
 		worldDir:  worldDir,
+		worldName: filepath.Base(worldDir),
 		day:       se.State().Day,
 		mode:      "scene",
 		heroName:  hero,
@@ -386,11 +389,12 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 		if da := s.DynamicAgentsState(); da != "" {
 			extraCtx += "活跃的负责人线（各部门在行动，事件要呼应它们）：\n" + da
 		}
-		if evs, err := EventGenLLM(ctx, s.llm, s.engine.State(), s.wb, s.OpenForeshadows(), formatPendingEvents(s, s.day), revealedAll, unrevealed, luckHint, s.lastDramaDay, s.currentArc, extraCtx); err == nil && len(evs) > 0 {
+		if evs, err := EventGenLLM(ctx, s.llm, s.engine.State(), s.wb, s.OpenForeshadows(), formatPendingEvents(s, s.day), revealedAll, unrevealed, luckHint, s.lastDramaDay, s.currentArc, extraCtx, s.castRoster(), s.formatBackground()); err == nil && len(evs) > 0 {
 			s.events = evs
 		} else {
 			if err != nil {
 				fmt.Printf(" [模拟] Day%d 事件生成失败(%v)，走 dry-run 兜底\n", s.day, err)
+				logging.ErrorW(s.worldName, "event", fmt.Sprintf("Day%d 事件生成失败，走 dry-run 兜底", s.day), map[string]any{"day": s.day, "error": err.Error()})
 				s.events = s.dryRunEvents()
 			}
 		}
@@ -537,6 +541,9 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 		if ev.Foreshadow != "" {
 			s.RegisterForeshadow(ev.Foreshadow)
 		}
+		if ev.ResolveForeshadow != "" {
+			s.ResolveForeshadow(ev.ResolveForeshadow, ev.Title)
+		}
 		if len(ev.NextEvents) > 0 {
 			s.queuePendingEvents(s.day+1+(s.day%3), ev.NextEvents) // 1-3天后触发
 		}
@@ -548,6 +555,10 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 	for _, ev := range s.events {
 		for _, nc := range ev.NewChars {
 			regChanges = append(regChanges, s.RegisterCharacter(nc)...)
+		}
+		// 出场活跃度追踪：今天在事件里出现的已有角色，刷新 last_active_day（淡出后召回则重新激活）
+		for _, npc := range ev.NPCs {
+			regChanges = append(regChanges, s.touchLastActive(npc)...)
 		}
 	}
 	// 角色档案：主角 + 已注册角色自动生成完整人设卡（灵魂化）——并行生成省时间
@@ -579,6 +590,9 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 				parts := strings.SplitN(c.Path, ".", 3)
 				if len(parts) >= 2 && parts[0] == "entities" && parts[1] != s.heroName {
 					s.mem.AddDay(s.heroName, fmt.Sprintf("Day%d：遇见了新面孔%s", s.day, parts[1]), "event", 0.6, s.day)
+					if c.Path == "entities."+parts[1]+".extra.role" {
+						logging.InfoW(s.worldName, "character", fmt.Sprintf("Day%d 新角色登场: %s (%s)", s.day, parts[1], c.Value), map[string]any{"day": s.day, "name": parts[1], "role": c.Value})
+					}
 				}
 			}
 		}
@@ -608,7 +622,18 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 		}
 	}
 
-	// ---------- 2. 世界推进（WorldAgent：LLM 优先，dry-run 兜底） ----------
+	// ---------- 3. 感知分发（§4.4：按主角位置/范围裁剪） ----------
+	// 提前构建主角感知与记忆（依赖 events，不依赖世界推进；供下方并行决策使用）
+	obs := s.buildObservation(s.events)
+	var memories string
+	if s.llm != nil {
+		// 记忆注入（§4.6：按相关性召回主角记忆）
+		memories = formatMemories(s.mem.Retrieve(s.heroName, "今天 近期 遭遇 关系 熟人 怪事 重要的事", 8))
+		s.mem.StrengthenRetrieval(s.heroName, s.mem.Retrieve(s.heroName, "今天 近期 遭遇 关系 熟人 怪事 重要的事", 8)) // 检索强化（hippo）
+	}
+
+	// ---------- 2+4. 世界推进 与 主角决策 并行（§性能：两者只读 state + LLM、仅依赖 events，互不依赖。
+	// 串行化时一天要先后等两次 LLM 完整返回；并行后墙钟时间≈max(两者)，显著缩短日耗时） ----------
 	advance := engine.Proposal{
 		CommandID:    s.nextCmd("world"),
 		ActorID:      "world_agent",
@@ -616,14 +641,59 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 		Type:         "state_change",
 		Reason:       fmt.Sprintf("Day %d 世界推进", s.day),
 	}
+	var action *engine.Proposal
 	if s.llm != nil {
-		if p, err := WorldAdvanceLLM(ctx, s.llm, s.engine.State(), s.events, engine.Rules{}, s.wb, s.OpenForeshadows(), s.currentArc); err == nil && p != nil {
-			advance.Changes = p.Changes
-			if p.Reason != "" {
-				advance.Reason = p.Reason
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		var heroErr error
+		wg.Add(2)
+		// 世界推进（WorldAgent：LLM 优先，dry-run 兜底）
+		go func() {
+			defer wg.Done()
+			p, err := WorldAdvanceLLM(ctx, s.llm, s.engine.State(), s.events, engine.Rules{}, s.wb, s.OpenForeshadows(), s.currentArc)
+			mu.Lock()
+			defer mu.Unlock()
+			if err == nil && p != nil {
+				advance.Changes = p.Changes
+				if p.Reason != "" {
+					advance.Reason = p.Reason
+				}
 			}
+		}()
+		// 主角决策（ProtagonistAgent：三问决策法 LLM / dry-run）
+		go func() {
+			defer wg.Done()
+			p, thinking, err := ProtagonistDecideLLM(ctx, s.llm, s.engine.State(), obs, s.heroName, s.wb, memories)
+			mu.Lock()
+			defer mu.Unlock()
+			if thinking != "" {
+				s.lastThinking = thinking
+				if s.thinkings == nil {
+					s.thinkings = make(map[int]string)
+				}
+				s.thinkings[s.day] = thinking
+			}
+			if err != nil {
+				heroErr = err
+			} else {
+				action = p // p 可能为 nil（维持现状）
+			}
+		}()
+		wg.Wait()
+		// 主角决策失败：记录并降级 dry-run
+		if heroErr != nil {
+			res.Chronicle = append(res.Chronicle, ChronicleEntry{
+				Day: s.day, Kind: "FACT", Time: now(),
+				Content:    "主角决策调用失败（降级为模板行动）：" + heroErr.Error(),
+				Visibility: "public",
+
+				Weight: 0.3, Tags: []string{"降级"}})
+			action = s.protagonistAct(s.events)
 		}
+	} else {
+		action = s.protagonistAct(s.events)
 	}
+	// 世界推进兜底 + 提交（无条件；LLM 失败/空时走 dry-run）
 	if len(advance.Changes) == 0 {
 		advance.Changes = s.worldAdvanceChanges()
 	}
@@ -634,39 +704,6 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 		return nil, fmt.Errorf("世界推进失败: %w", err)
 	}
 	res.Proposals = append(res.Proposals, advance)
-
-	// ---------- 3. 感知分发（§4.4：按主角位置/范围裁剪） ----------
-	obs := s.buildObservation(s.events)
-
-	// ---------- 4. 主角决策（ProtagonistAgent：三问决策法 LLM / dry-run） ----------
-	var action *engine.Proposal
-	if s.llm != nil {
-		// 记忆注入（§4.6：按相关性召回主角记忆）
-		memories := formatMemories(s.mem.Retrieve(s.heroName, "今天 近期 遭遇 关系 熟人 怪事 重要的事", 8))
-		s.mem.StrengthenRetrieval(s.heroName, s.mem.Retrieve(s.heroName, "今天 近期 遭遇 关系 熟人 怪事 重要的事", 8)) // 检索强化（hippo）
-		p, thinking, err := ProtagonistDecideLLM(ctx, s.llm, s.engine.State(), obs, s.heroName, s.wb, memories)
-		if thinking != "" {
-			s.lastThinking = thinking
-			if s.thinkings == nil {
-				s.thinkings = make(map[int]string)
-			}
-			s.thinkings[s.day] = thinking
-		}
-		if err != nil {
-			// LLM 失败：记录并降级 dry-run
-			res.Chronicle = append(res.Chronicle, ChronicleEntry{
-				Day: s.day, Kind: "FACT", Time: now(),
-				Content:    "主角决策调用失败（降级为模板行动）：" + err.Error(),
-				Visibility: "public",
-
-				Weight: 0.3, Tags: []string{"降级"}})
-			action = s.protagonistAct(s.events)
-		} else {
-			action = p // p 可能为 nil（维持现状）
-		}
-	} else {
-		action = s.protagonistAct(s.events)
-	}
 	if action != nil {
 		action.CommandID = s.nextCmd("hero")
 		action.ActorID = "protagonist"
@@ -706,13 +743,12 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 		}
 	}
 
-	// ---------- 4.6 岔口决策入队（AI 代决零阻塞：主角行动即 AI 推荐方向；用户可事后改选，写手按最终方向写） ----------
-	aiAction, aiReason := "", ""
+	// ---------- 4.6 岔口决策入队（AI 代决零阻塞：每个岔口独立 AI 代决，用户可事后改选，写手按最终方向写） ----------
+	heroAction := ""
 	if action != nil {
-		aiAction = action.Reason
-		aiReason = "主角三问决策（AI 代决，用户可改选）"
+		heroAction = action.Reason
 	}
-	s.captureDecisions(aiAction, aiReason)
+	s.captureDecisions(ctx, heroAction)
 
 	// ---------- 5. NPC 互动对话（§5.1：含 NPC 的事件触发，Init→Act→React） ----------
 	var dialogue []DialogueTurn
@@ -721,7 +757,14 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 			turns, prop, err := s.RunDialogue(ctx, ev)
 			if err == nil && prop != nil {
 				prop.CommandID = s.nextCmd("npc")
-				prop.ActorID = "npc_" + ev.NPCs[0]
+				// RunDialogue 内部已按 ev.NPCs/FirstActor 解析出实际 NPC；这里兼容 NPCs 为空但 FirstActor 直指 npc_xxx 的场景，避免越界。
+				actor := "npc_熟人"
+				if len(ev.NPCs) > 0 {
+					actor = "npc_" + ev.NPCs[0]
+				} else if strings.HasPrefix(ev.FirstActor, "npc_") {
+					actor = ev.FirstActor
+				}
+				prop.ActorID = actor
 				prop.BaseRevision = s.engine.State().Revision
 				prop.Type = "state_change"
 				if err := s.engine.Submit(ctx, prop); err == nil {
@@ -767,11 +810,24 @@ func (s *Simulator) RunDay(ctx context.Context) (*DayResult, error) {
 	// 记忆写入（§4.6）：当日事件 → 主角记忆；世界变化 → 世界记忆
 	s.recordMemories(res)
 
-	// ---------- 关系系统：衰减 + 生命周期（"只见过几年"的悲欢） ----------
+	// ---------- 关系系统：衰减 + 生命周期（"只见过几年"的悲欢）+ 配角淡出 ----------
 	relChanges = nil
 	relChanges = append(relChanges, s.DecayRelations(s.heroName, 7)...) // 每7天好感衰减
 	relChanges = append(relChanges, s.CheckLifecycle()...)
+	relChanges = append(relChanges, s.FadeOutCheck()...)
 	if len(relChanges) > 0 {
+		// 生命周期日志：角色退场/淡出（重点关注）
+		for _, c := range relChanges {
+			if strings.HasPrefix(c.Path, "entities.") && strings.HasSuffix(c.Path, ".status") {
+				nm := strings.SplitN(strings.TrimPrefix(c.Path, "entities."), ".", 2)[0]
+				switch c.Value {
+				case "departed":
+					logging.InfoW(s.worldName, "character", fmt.Sprintf("Day%d 角色退场: %s", s.day, nm), map[string]any{"day": s.day, "name": nm, "status": "departed"})
+				case "dormant":
+					logging.InfoW(s.worldName, "character", fmt.Sprintf("Day%d 角色淡出(背景化): %s", s.day, nm), map[string]any{"day": s.day, "name": nm, "status": "dormant"})
+				}
+			}
+		}
 		lifeProp := engine.Proposal{
 			CommandID: s.nextCmd("life"), ActorID: "world_agent",
 			BaseRevision: s.engine.State().Revision, Type: "state_change",
@@ -811,6 +867,7 @@ func (s *Simulator) recordMemories(res *DayResult) {
 		return
 	}
 	// ① 事件：主角记 + 事件涉及的 NPC 也记（各自视角）
+	// 龙套（walkon）不占记忆：只记主角视角的"遇到"，不给龙套建独立记忆
 	for _, ev := range res.Events {
 		imp := 0.3 + ev.Severity*0.7
 		s.mem.AddDay(s.heroName, fmt.Sprintf("第%d天：%s（%s）", ev.Day, ev.Title, ev.Frame), "event", imp, ev.Day)
@@ -818,13 +875,16 @@ func (s *Simulator) recordMemories(res *DayResult) {
 			if npc == "" || npc == s.heroName {
 				continue
 			}
+			if s.isWalkon(npc) {
+				continue // 龙套不建独立记忆
+			}
 			s.mem.AddDay(npc, fmt.Sprintf("第%d天：我卷进了这件事——%s", ev.Day, ev.Title), "event", imp*0.9, ev.Day)
 		}
 	}
 	// ② 对话：双方记忆（说话人记自己的话，其他在场者记听到了什么）
 	participants := []string{s.heroName}
 	for _, t := range res.Dialogue {
-		if t.Speaker != "" && t.Speaker != s.heroName {
+		if t.Speaker != "" && t.Speaker != s.heroName && !s.isWalkon(t.Speaker) {
 			participants = append(participants, t.Speaker)
 		}
 	}
@@ -960,7 +1020,7 @@ func (s *Simulator) generateEvent() *EventCard {
 			break
 		}
 	}
-	// NPC：第一个非主角的实体（修仙=陈伯/赵成，都市=老陈）
+	// NPC：第一个非主角的实体（由世界初始化决定）
 	npcName := ""
 	for n := range s.engine.State().Entities {
 		if n != s.heroName {

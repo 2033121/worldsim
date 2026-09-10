@@ -1297,7 +1297,7 @@ func getBuiltinTools() []Tool {
 					}
 				}
 				ctx.StartAsync("outline_generation", func(goCtx context.Context) error {
-					err := story.GenerateOutlineAction(goCtx, ctx.APICfg, ctx.Config, ctx.State, ctx.Settings, ctx.ProgressPath, ctx.CfgPath, ctx.Logger)
+					err := story.GenerateOutlineAction(goCtx, ctx.APICfg, ctx.Config, ctx.State, ctx.Settings, ctx.ProgressPath, ctx.CfgPath, ctx.Skills, ctx.Logger)
 					if err != nil {
 						ctx.Logger.Error(fmt.Sprintf("大纲生成失败: %v", err))
 					}
@@ -1340,7 +1340,7 @@ func getBuiltinTools() []Tool {
 				}
 				feedback := params.Feedback
 				ctx.StartAsync("outline_revision", func(goCtx context.Context) error {
-					err := story.ReviseOutlineAction(goCtx, ctx.APICfg, ctx.Config, ctx.State, ctx.Settings, ctx.ProgressPath, ctx.CfgPath, feedback, ctx.Logger)
+					err := story.ReviseOutlineAction(goCtx, ctx.APICfg, ctx.Config, ctx.State, ctx.Settings, ctx.ProgressPath, ctx.CfgPath, feedback, ctx.Skills, ctx.Logger)
 					if err != nil {
 						ctx.Logger.Error(fmt.Sprintf("大纲修订失败: %v", err))
 					}
@@ -1411,7 +1411,7 @@ func getBuiltinTools() []Tool {
 				}
 				chIdx := ctx.State.CurrentChapterIndex
 				ctx.StartAsync("chapter_generation", func(goCtx context.Context) error {
-					err := story.GenerateChapterAction(goCtx, ctx.APICfg, ctx.Config, ctx.State, ctx.ProgressPath, ctx.Settings, ctx.Logger)
+					err := story.GenerateChapterAction(goCtx, ctx.APICfg, ctx.Config, ctx.State, ctx.ProgressPath, ctx.Settings, ctx.Skills, ctx.Logger)
 					if err != nil {
 						ctx.Logger.Error(fmt.Sprintf("章节创作失败: %v", err))
 					}

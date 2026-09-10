@@ -12,21 +12,30 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"worldsim/internal/attach"
 	"worldsim/internal/config"
 	"worldsim/internal/engine"
+	"worldsim/internal/health"
 	"worldsim/internal/httpapi"
 	"worldsim/internal/llm"
+	"worldsim/internal/logging"
+	"worldsim/internal/logx"
 	"worldsim/internal/novel"
+	"worldsim/internal/research"
+	"worldsim/internal/search"
+	"worldsim/internal/selfheal"
 	"worldsim/internal/sim"
 	"worldsim/internal/sse"
 	"worldsim/internal/worldbook"
@@ -39,31 +48,62 @@ var staticFiles embed.FS
 var wsWeb embed.FS
 
 var version = "dev"
+var searchProvider search.Provider // 全局搜索提供者（供 handleSystemStatus 使用）
 
 const (
 	storyPort = ":48090" // 小说化服务（原项目功能）
 	worldPort = ":48091" // 世界模拟服务（WorldSim 新增）
+	uiPort    = ":48092" // 统一前端入口（浏览器式导航外壳）+ API 网关
 )
+
+// listenHost 返回监听地址绑定主机：默认仅本机（127.0.0.1，安全），
+// Docker/公网部署可用环境变量 WORLDSIM_HOST=0.0.0.0 覆盖。
+func listenHost() string {
+	if h := os.Getenv("WORLDSIM_HOST"); h != "" {
+		return h
+	}
+	return "127.0.0.1"
+}
 
 func main() {
 	progDir := resolveProgDir()
 	storysDir := filepath.Join(progDir, "storys")
 	os.MkdirAll(storysDir, 0755)
 
+	// ---------- 结构化日志（分级 + 文件持久化 + 按天轮转） ----------
+	lx := logx.Get(progDir)
+	lx.Info("系统", "WorldSim 启动，版本=%s 程序目录=%s", version, progDir)
+
 	// ---------- 世界模拟目录 ----------
 	worldDir := filepath.Join(progDir, "worlds")
 	os.MkdirAll(worldDir, 0755)
+
+	// ---------- 完整日志系统（结构化持久化 + 内存检索 + HTTP API） ----------
+	// 落盘 <progDir>/logs/YYYY-MM-DD.jsonl，跨重启保留；全局单例供所有包使用。
+	logDir := filepath.Join(progDir, "logs")
+	if err := logging.Init(logDir); err != nil {
+		fmt.Printf(" [警告] 初始化日志系统失败: %v\n", err)
+	} else {
+		fmt.Printf(" [系统] 日志系统已就绪: %s\n", logDir)
+	}
+	defer logging.Close()
+	logging.Info("server", "WorldSim 服务启动", map[string]any{"prog_dir": progDir, "version": version})
+
+	// ---------- LLM 用量历史（全局，跨重启，落盘 <progDir>/llm_stats/） ----------
+	if err := llm.InitStatsStore(filepath.Join(progDir, "llm_stats")); err != nil {
+		fmt.Printf(" [警告] 初始化 LLM 用量历史失败: %v\n", err)
+	}
 
 	// ---------- API 配置（小说化服务共用） ----------
 	apiCfgPath := filepath.Join(progDir, "api.json")
 	apiCfg, err := config.LoadAPIConfig(apiCfgPath)
 	if err != nil {
-		fmt.Printf(" [错误] 加载API配置失败: %v\n", err)
+		lx.Error("系统", "加载API配置失败: %v", err)
 		os.Exit(1)
 	}
 	llm.EnsureContextBudget(apiCfg)
 	if apiCfg.BaseURL == "" || apiCfg.Model == "" {
-		fmt.Println(" [系统] 检测到空白API配置，已自动生成 api.json（请在 Web UI 配置）")
+		lx.Warn("系统", "检测到空白API配置，已自动生成 api.json（请在 Web UI 配置）")
 	}
 
 	// ---------- 启动小说化服务（48090） ----------
@@ -74,16 +114,39 @@ func main() {
 	if err != nil {
 		log.Fatalf("嵌入静态文件失败: %v", err)
 	}
-	go httpapi.StartWebServer(apiCfg, apiCfgPath, logger, storyPort, progDir, version, staticFS)
-	fmt.Printf(" [系统] 小说创作服务已启动: http://localhost%s\n", storyPort)
+	// ---------- 联网搜索提供者（小说化服务用） ----------
+	searchCfg, _ := search.LoadConfig(filepath.Join(progDir, "search.json"))
+	searchProvider, _ = search.NewProvider(searchCfg)
+
+	// ---------- 题材研究智能体（热门题材研究/主题规划/世界书方向产出） ----------
+	researchAgent := research.NewAgent(apiCfg, nil, nil, nil, filepath.Join(progDir, "research"))
+
+	go httpapi.StartWebServer(apiCfg, apiCfgPath, logger, listenHost(), storyPort, progDir, version, staticFS, searchProvider)
+	lx.Info("系统", "小说创作服务已启动: http://localhost%s", storyPort)
+	logging.Info("server", "小说创作服务启动", map[string]any{"addr": listenHost() + storyPort})
 
 	// ---------- 启动世界模拟服务（48091） ----------
-	go startWorldServer(worldDir, apiCfg)
-	fmt.Printf(" [系统] 世界模拟服务已启动: http://localhost%s\n", worldPort)
+	// 内嵌监测与自愈模块：跟踪运行/错误日志，异常自动诊断并修复
+	healMgr, healErr := selfheal.New(progDir, apiCfgPath)
+	if healErr != nil {
+		lx.Warn("系统", "自愈模块初始化失败: %v", healErr)
+	}
+	go startWorldServer(worldDir, apiCfg, researchAgent, healMgr)
+	lx.Info("系统", "世界模拟服务已启动: http://localhost%s", worldPort)
 
-	fmt.Printf(" [系统] 程序目录: %s\n", progDir)
-	fmt.Printf(" [系统] 小说项目目录: %s\n", storysDir)
-	fmt.Printf(" [系统] 世界模拟目录: %s\n", worldDir)
+	// ---------- 运行检测 + 自动修复 ----------
+	hc := health.New(progDir)
+	// 注入自动修复处理器：LLM 连续失败时输出修复建议（保持简单，后续可扩展为模型降级切换）
+	health.SetAutoHealHandler(func(reason string) string {
+		lx.Warn("自愈", "执行自动修复：%s", reason)
+		return "已记录修复动作；建议检查中转站限流或切换模型（api.json）"
+	})
+	hc.Start()
+	lx.Info("系统", "运行检测已启动: /api/health、/api/logs、heartbeat.json")
+
+	lx.Info("系统", "程序目录: %s", progDir)
+	lx.Info("系统", "小说项目目录: %s", storysDir)
+	lx.Info("系统", "世界模拟目录: %s", worldDir)
 
 	select {} // 阻塞主协程
 }
@@ -117,15 +180,22 @@ type worldInstance struct {
 	wb       *worldbook.Worldbook
 	novelW   *novel.Writer
 	apiCfg   *config.APIConfig
-	heroName string // 主角名（小说写手必须用模拟主角名）
-	created  bool   // 是否已初始化世界状态（主角等）
+	heroName string         // 主角名（小说写手必须用模拟主角名）
+	created  bool           // 是否已初始化世界状态（主角等）
+	lastDay  *sim.DayResult // 最近一次模拟结果（手动跑天/后台循环都会更新，供"今日对话/事件"面板）
+	attach   *attach.Store  // 世界参考资料附件存储（worlds/{世界名}/attachments/）
 }
 
 func (w *worldInstance) ready() bool { return w != nil && w.engine != nil }
 
-func startWorldServer(worldDir string, apiCfg *config.APIConfig) {
-	ws := &worldServer{baseDir: worldDir, apiCfg: apiCfg, worlds: map[string]*worldInstance{}}
+func startWorldServer(worldDir string, apiCfg *config.APIConfig, ra *research.Agent, heal *selfheal.Manager) {
+	ws := &worldServer{baseDir: worldDir, apiCfg: apiCfg, worlds: map[string]*worldInstance{}, research: ra, heal: heal}
 	ws.scanWorlds()
+
+	// ---------- 内嵌监测与自愈模块：注册修复回调 + 运行时状态源 + 启动监测循环 ----------
+	if heal != nil {
+		ws.setupSelfHeal()
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/worlds", ws.handleWorldsList)
@@ -149,10 +219,36 @@ func startWorldServer(worldDir string, apiCfg *config.APIConfig) {
 	mux.HandleFunc("GET /api/world/novel", ws.handleNovelList)
 	mux.HandleFunc("GET /api/world/novel/chapter/{num}", ws.handleNovelChapter)
 
+	// 世界参考资料附件：上传 / 列表 / 删除
+	mux.HandleFunc("POST /api/world/attach/upload", ws.handleAttachUpload)
+	mux.HandleFunc("GET /api/world/attach", ws.handleAttachList)
+	mux.HandleFunc("DELETE /api/world/attach/{name}", ws.handleAttachDelete)
+	mux.HandleFunc("GET /api/world/attach/refs", ws.handleAttachRefs)
+
+	// 题材研究智能体：发起研究 / 历史方案 / 存卡片 / 生成方向
+	// 注：相关 handler 方法待实现，暂时跳过路由注册
+	// mux.HandleFunc("POST /api/research", ws.handleResearch)
+	// mux.HandleFunc("GET /api/research/proposals", ws.handleResearchProposals)
+	// mux.HandleFunc("POST /api/research/{id}/direction", ws.handleResearchDirection)
+	// mux.HandleFunc("POST /api/research/{id}/save-card", ws.handleResearchSaveCard)
+	// mux.HandleFunc("GET /api/research/{id}", ws.handleResearchGet)
+
+	// 系统状态（联网搜索是否启用等）
+	mux.HandleFunc("GET /api/system/status", ws.handleSystemStatus)
+
+	// 内嵌监测与自愈：状态 / 记录（前端监测面板）
+	mux.HandleFunc("GET /api/selfheal/status", ws.handleSelfHealStatus)
+	mux.HandleFunc("GET /api/selfheal/incidents", ws.handleSelfHealIncidents)
+
+	// LLM 全局用量统计（实时 + 历史；统一网关 48092 的 /api/* 也转发到这里）
+	mux.HandleFunc("GET /api/llm/stats", ws.handleLLMStats)
+	mux.HandleFunc("GET /api/llm/stats/history", ws.handleLLMStatsHistory)
+
 	// 控制台：主题包列表 / 世界书 / 伏笔 / 后台循环
 	mux.HandleFunc("GET /api/worldbooks/themes", ws.handleThemesList)
 	mux.HandleFunc("GET /api/world/worldbook", ws.handleGetWorldbook)
 	mux.HandleFunc("GET /api/world/foreshadows", ws.handleForeshadows)
+	mux.HandleFunc("GET /api/world/today", ws.handleToday)
 	mux.HandleFunc("POST /api/world/loop", ws.handleLoopSet)
 	mux.HandleFunc("GET /api/world/loop", ws.handleLoopStatus)
 
@@ -161,7 +257,20 @@ func startWorldServer(worldDir string, apiCfg *config.APIConfig) {
 	mux.HandleFunc("POST /api/world/snapshot", ws.handleSnapshot)
 	mux.HandleFunc("POST /api/world/rewind", ws.handleRewind)
 
-	// WebUI 世界模拟面板（单文件前端）
+	// 完整日志系统：查询 / 统计
+	mux.HandleFunc("GET /api/logs", ws.handleLogs)
+	mux.HandleFunc("GET /api/logs/stats", ws.handleLogsStats)
+
+	// 运行检测：健康检查（后期检查与改进用）
+	hc := health.New(filepath.Dir(ws.baseDir)) // ws.baseDir=worlds目录，日志写 wsdata（上级）
+	mux.HandleFunc("GET /api/health", hc.HandleHealth)
+
+	// WebUI 世界模拟面板（构建产物，embed 进二进制）
+	wsWebFS, subErr := fs.Sub(wsWeb, "wsweb")
+	if subErr != nil {
+		log.Fatalf("嵌入 wsweb 静态文件失败: %v", subErr)
+	}
+	_ = wsWebFS // 保留供后续扩展（当前用 embed 直接读 index.html）
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
@@ -176,24 +285,28 @@ func startWorldServer(worldDir string, apiCfg *config.APIConfig) {
 		w.Write(data)
 	})
 
-	if err := http.ListenAndServe(worldPort, mux); err != nil {
+	if err := http.ListenAndServe(listenHost()+worldPort, mux); err != nil {
 		log.Fatalf(" [世界模拟] 服务启动失败: %v", err)
 	}
 }
 
 // 多世界：worldServer 持有世界实例池
 type worldServer struct {
-	baseDir string // worlds/
-	worlds  map[string]*worldInstance
-	current string // 当前世界名
-	apiCfg  *config.APIConfig
-	novelMu sync.Mutex // 小说生成防重入锁（并发请求会写重复章号）
+	baseDir  string // worlds/
+	worlds   map[string]*worldInstance
+	current  string // 当前世界名
+	apiCfg   *config.APIConfig
+	research *research.Agent // 题材研究智能体（热门题材研究/主题规划/世界书方向产出）
+	novelMu  sync.Mutex      // 小说生成防重入锁（并发请求会写重复章号）
 
-	loopMu      sync.Mutex // 后台持续运行控制
-	loopRunning bool       // 循环是否在跑
-	loopCancel  context.CancelFunc
-	loopTarget  int    // 目标 day（世界时间）
-	loopWorld   string // 循环绑定的世界名
+	loopMu         sync.Mutex // 后台持续运行控制
+	loopRunning    bool       // 循环是否在跑
+	loopCancel     context.CancelFunc
+	loopTarget     int    // 目标 day（世界时间）
+	loopWorld      string // 循环绑定的世界名
+	loopConsecFail int    // 连续 RunDay 失败次数（自愈监测用）
+
+	heal *selfheal.Manager // 内嵌监测与自愈模块
 }
 
 // handleThemesList GET /api/worldbooks/themes — 主题包列表（建世界下拉用）
@@ -293,23 +406,70 @@ func (ws *worldServer) handleLoopSet(w http.ResponseWriter, r *http.Request) {
 	ws.loopWorld = inst.name
 	go func() {
 		defer func() {
+			// 后台 goroutine 无 HTTP 中间件兜底，panic 会崩掉整个进程；这里恢复并复位循环状态
+			if r := recover(); r != nil {
+				logging.ErrorW(inst.name, "loop", "模拟循环 panic（已恢复）", map[string]any{"panic": fmt.Sprint(r), "day": inst.engine.State().Day})
+			}
 			ws.loopMu.Lock()
 			ws.loopRunning = false
 			ws.loopCancel = nil
 			ws.loopMu.Unlock()
 		}()
+		// 防空转：连续 dry-run（LLM 连不上导致事件生成失败走模板）计数
+		// 超过阈值自动回退到最近健康快照，避免"空转污染"世界（干跑模板事件破坏剧情）
+		consecDryRun := 0
+		const maxDryRunBeforeRewind = 5
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			default:
 			}
-			if _, err := inst.sim.RunDay(ctx); err != nil {
-				// 单日失败不中断循环（中转站抖动/超时），但停一会儿再试
+			if res, err := inst.sim.RunDay(ctx); err != nil {
+				// 单日失败不中断循环（中转站抖动/超时），但统计连续失败（供自愈监测判断是否异常）
+				ws.loopMu.Lock()
+				ws.loopConsecFail++
+				cFail := ws.loopConsecFail
+				ws.loopMu.Unlock()
+				logging.ErrorW(inst.name, "loop", fmt.Sprintf("Day%d 模拟失败(%v)，连续第 %d 次（自动重试）", inst.engine.State().Day, err, cFail), map[string]any{"day": inst.engine.State().Day, "error": err.Error(), "consec_fail": cFail})
+				if ws.heal != nil && cFail == 1 {
+					ws.heal.Heartbeat("warn",
+						fmt.Sprintf("「%s」Day%d 模拟失败(%v)，连续第 %d 次（自动重试）", inst.name, inst.engine.State().Day, err, cFail))
+				}
 				time.Sleep(1 * time.Second)
 				continue
+			} else {
+				ws.loopMu.Lock()
+				ws.loopConsecFail = 0
+				ws.loopMu.Unlock()
+				inst.lastDay = res // 供前端"今日对话/事件"面板
+				logging.InfoW(inst.name, "loop", fmt.Sprintf("Day%d 完成（mode=%s，事件%d）", res.Day, res.Mode, len(res.Events)), map[string]any{"day": res.Day, "mode": res.Mode, "events": len(res.Events)})
+				if ws.heal != nil {
+					ws.heal.Heartbeat("info",
+						fmt.Sprintf("「%s」Day%d 完成（mode=%s，事件%d）", inst.name, res.Day, res.Mode, len(res.Events)))
+				}
 			}
-			inst.autoSnapshot() // 每30天自动存档（时间回退锚点）
+			inst.autoSnapshot() // 每7天自动存档（时间回退锚点）
+
+			// --- 防空转检测：事件生成是否走 dry-run ---
+			snap := logx.M().Snapshot()
+			// 检查本次 RunDay 是否 dry-run：用全局指标 last_sim_ok（最近一次 LLM 是否成功）
+			lastOK, _ := snap["last_sim_ok"].(bool)
+			llmCalls, _ := snap["llm_calls"].(int64)
+			if !lastOK && llmCalls > 0 {
+				consecDryRun++
+				if consecDryRun == 1 {
+					// 第一次失败：先存一个"风险前健康快照"，万一后面连不上，至少有干净锚点
+					inst.snapshotBeforeRisk("LLM抖动·风险前存档")
+				}
+				if consecDryRun >= maxDryRunBeforeRewind {
+					fmt.Printf(" [防空转] LLM 连续失败 %d 次，自动回退到最近健康快照（防止空转污染）\n", consecDryRun)
+					ws.autoRewindSafe(inst, "LLM连续失败自动回档")
+					consecDryRun = 0
+				}
+			} else {
+				consecDryRun = 0 // LLM 正常，重置计数
+			}
 			// 就绪度驱动：素材够了自动停，等用户看小说
 			if rdy, ok := inst.sim.Readiness()["ready"].(bool); ok && rdy {
 				return
@@ -321,6 +481,7 @@ func (ws *worldServer) handleLoopSet(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 	ws.writeJSON(w, 200, map[string]any{"ok": true, "running": true, "target_day": ws.loopTarget, "world": ws.loopWorld})
+	logging.InfoW(inst.name, "loop", fmt.Sprintf("后台模拟循环启动，目标 Day%d", ws.loopTarget), map[string]any{"target_day": ws.loopTarget})
 }
 
 // handleLoopStatus GET /api/world/loop — 循环状态（前端开关/进度条用）
@@ -344,15 +505,28 @@ func (ws *worldServer) handleLoopStatus(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// autoSnapshot 自动快照：每 30 天存一次（时间回退的锚点）
+// autoSnapshot 自动快照：每 7 天存一次（时间回退锚点）+ 手动存档
+// 频率提升：30 天太长，LLM 连不上空转几天后想回档会没有干净锚点
 func (w *worldInstance) autoSnapshot() {
 	if w.sim == nil {
 		return
 	}
-	if w.engine.State().Day%30 == 0 {
-		if _, err := w.sim.SaveSnapshot("自动·每30天"); err == nil {
-			fmt.Printf(" [快照] Day%d 自动存档（时间回退锚点）\n", w.engine.State().Day)
+	day := w.engine.State().Day
+	if day%7 == 0 {
+		if _, err := w.sim.SaveSnapshot(fmt.Sprintf("自动·每7天·Day%d", day)); err == nil {
+			fmt.Printf(" [快照] Day%d 自动存档（时间回退锚点）\n", day)
 		}
+	}
+}
+
+// snapshotBeforeRisk 在"可能出问题"前存一个健康快照：
+// LLM 连续失败（中转站抖动）时，把当前状态固化为可回退锚点——防止空转污染后无处可回
+func (w *worldInstance) snapshotBeforeRisk(reason string) {
+	if w.sim == nil {
+		return
+	}
+	if _, err := w.sim.SaveSnapshot(reason); err == nil {
+		fmt.Printf(" [快照] 风险前自动存档：%s（Day%d）\n", reason, w.engine.State().Day)
 	}
 }
 
@@ -383,6 +557,33 @@ func (ws *worldServer) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ws.writeJSON(w, 200, map[string]any{"ok": true, "snapshot": meta})
+}
+
+// autoRewindSafe 防空转自动回档：回退到最近健康快照（LLM 连不上时空转后恢复干净状态）
+// 回退后重建 Simulator + 刷新内存状态；若没有快照则只记录（无法回退）
+func (ws *worldServer) autoRewindSafe(inst *worldInstance, reason string) {
+	if inst == nil || inst.sim == nil {
+		return
+	}
+	// 回退到"当前 day 之前最近"的健康快照（不要回退到当天，当天可能已污染）
+	target := inst.engine.State().Day - 1
+	if target <= 0 {
+		target = 1
+	}
+	meta, err := inst.sim.RewindTo(target)
+	if err != nil {
+		fmt.Printf(" [防空转] 无可用健康快照可回退（%v），继续当前状态\n", err)
+		return
+	}
+	// 重建 Simulator + 刷新内存
+	if err := inst.engine.Load(filepath.Join(inst.dir, "world_state.json")); err != nil {
+		fmt.Printf(" [防空转] 回退后状态加载失败: %v\n", err)
+		return
+	}
+	inst.sim = sim.NewSimulator(inst.engine, inst.dir)
+	inst.heroName = inst.sim.HeroName()
+	inst.applyLLM()
+	fmt.Printf(" [防空转] 已自动回档到 Day%d（原因：%s）\n", meta.Day, reason)
 }
 
 // handleRewind POST /api/world/rewind — 时间回退到 ≤day 的最近快照（body: {"day":N}）
@@ -422,12 +623,41 @@ func (ws *worldServer) handleRewind(w http.ResponseWriter, r *http.Request) {
 	inst.sim = sim.NewSimulator(inst.engine, inst.dir)
 	inst.heroName = inst.sim.HeroName()
 	inst.applyLLM()
+	logging.InfoW(inst.name, "rewind", fmt.Sprintf("世界回退到 Day%d (rev%d)", meta.Day, meta.Revision), map[string]any{"day": meta.Day, "revision": meta.Revision, "reason": meta.Reason})
 	fmt.Printf(" [回退] 「%s」已回退到 Day%d（rev%d，快照：%s）\n", inst.name, meta.Day, meta.Revision, meta.Reason)
 	ws.writeJSON(w, 200, map[string]any{
 		"ok": true, "rewound_to": meta.Day, "revision": meta.Revision,
 		"reason": meta.Reason, "snapshot": meta,
 		"hint": "已回退到该时间点，可重新启动循环继续演化（会走出新分支）",
 	})
+}
+
+// handleLogs 查询日志（GET /api/logs?level=&cat=&world=&kw=&max=）
+// 返回最新在前的日志条目，便于排查问题。
+func (ws *worldServer) handleLogs(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	max := 200
+	if v := q.Get("max"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 10000 {
+			max = n
+		}
+	}
+	entries := logging.List(logging.Query{
+		Level: q.Get("level"),
+		Cat:   q.Get("cat"),
+		World: q.Get("world"),
+		Kw:    q.Get("kw"),
+		Max:   max,
+	})
+	ws.writeJSON(w, 200, map[string]any{
+		"ok": true, "count": len(entries), "entries": entries,
+	})
+}
+
+// handleLogsStats 日志统计（GET /api/logs/stats）按级别/分类聚合
+func (ws *worldServer) handleLogsStats(w http.ResponseWriter, r *http.Request) {
+	stats := logging.Counts()
+	ws.writeJSON(w, 200, map[string]any{"ok": true, "stats": stats})
 }
 
 // inst 返回当前世界实例（无则报错）
@@ -543,6 +773,250 @@ func (ws *worldServer) autoEnableLLM(w *worldInstance) {
 	w.applyLLM()
 }
 
+// attachRefs 返回当前世界参考资料的聚合文本（注入 LLM 上下文用）。
+func (w *worldInstance) attachRefs() string {
+	if w == nil || w.attach == nil {
+		return ""
+	}
+	return w.attach.Aggregate()
+}
+
+// refreshWorldRefs 上传/删除附件后刷新 LLM 客户端的世界参考资料（同一指针，立即生效）。
+func (ws *worldServer) refreshWorldRefs(w *worldInstance) {
+	if w == nil || w.llm == nil {
+		return
+	}
+	w.llm.WorldRefs = w.attachRefs()
+	fmt.Printf(" [附件] 世界参考资料已刷新（%d 字）\n", len(w.llm.WorldRefs))
+}
+
+// POST /api/world/attach/upload — 上传世界参考资料附件（multipart 字段 file）
+func (ws *worldServer) handleAttachUpload(w http.ResponseWriter, r *http.Request) {
+	inst := ws.inst()
+	if inst == nil || inst.attach == nil {
+		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": "没有可用世界，请先创建"})
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, attach.MaxBytes+1<<20)
+	if err := r.ParseMultipartForm(attach.MaxBytes); err != nil {
+		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": "解析上传表单失败: " + err.Error()})
+		return
+	}
+	file, hdr, err := r.FormFile("file")
+	if err != nil {
+		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": "缺少 file 字段或读取失败"})
+		return
+	}
+	defer file.Close()
+	data, err := io.ReadAll(file)
+	if err != nil {
+		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": "读取文件失败: " + err.Error()})
+		return
+	}
+	att, err := inst.attach.Save(hdr.Filename, data)
+	if err != nil {
+		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	ws.refreshWorldRefs(inst)
+	ws.writeJSON(w, 200, map[string]any{"ok": true, "attachment": att})
+}
+
+// GET /api/world/attach — 附件列表
+func (ws *worldServer) handleAttachList(w http.ResponseWriter, r *http.Request) {
+	inst := ws.inst()
+	if inst == nil || inst.attach == nil {
+		ws.writeJSON(w, 200, map[string]any{"attachments": []attach.Attachment{}})
+		return
+	}
+	ws.writeJSON(w, 200, map[string]any{"attachments": inst.attach.List()})
+}
+
+// DELETE /api/world/attach/{name} — 删除附件
+func (ws *worldServer) handleAttachDelete(w http.ResponseWriter, r *http.Request) {
+	inst := ws.inst()
+	if inst == nil || inst.attach == nil {
+		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": "没有可用世界，请先创建"})
+		return
+	}
+	name := r.PathValue("name")
+	if err := inst.attach.Delete(name); err != nil {
+		ws.writeJSON(w, 404, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	ws.refreshWorldRefs(inst)
+	ws.writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// GET /api/world/attach/refs — 当前注入的世界参考资料（聚合文本预览，供前端展示）
+func (ws *worldServer) handleAttachRefs(w http.ResponseWriter, r *http.Request) {
+	inst := ws.inst()
+	if inst == nil {
+		ws.writeJSON(w, 200, map[string]any{"refs": ""})
+		return
+	}
+	ws.writeJSON(w, 200, map[string]any{"refs": inst.attachRefs()})
+}
+
+// GET /api/system/status — 系统能力状态（联网搜索是否启用）
+func (ws *worldServer) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
+	ws.writeJSON(w, 200, map[string]any{
+		"search_enabled":   searchProvider != nil,
+		"research_enabled": ws.research != nil,
+		"theme_cards":      ws.themeCardIDs(),
+	})
+}
+
+// ---------- 内嵌监测与自愈 ----------
+
+// setupSelfHeal 注册修复回调、运行时状态源，并启动周期性监测循环。
+func (ws *worldServer) setupSelfHeal() {
+	h := ws.heal
+	if h == nil {
+		return
+	}
+	// 1. 运行时状态源：模拟循环状态（卡死 / 连续失败检测）
+	h.SetLoopStateSource(func() selfheal.LoopState {
+		ws.loopMu.Lock()
+		defer ws.loopMu.Unlock()
+		st := selfheal.LoopState{
+			Running:    ws.loopRunning,
+			World:      ws.loopWorld,
+			TargetDay:  ws.loopTarget,
+			ConsecFail: ws.loopConsecFail,
+		}
+		if inst := ws.worlds[ws.loopWorld]; inst != nil && inst.engine != nil {
+			st.Day = inst.engine.State().Day
+			st.LLMRunning = inst.llm != nil && inst.llm.Cfg != nil && inst.llm.Cfg.Model != ""
+		}
+		return st
+	})
+
+	// 2. 修复回调：LLM 配置缺失 → 生成 api.json 模板
+	h.RegisterHealer("llm_config", func() (string, error) { return ws.healLLMConfig() })
+
+	// 3. 修复回调：模拟循环连续失败 → 中断异常循环（防空转烧 token）
+	h.RegisterHealer("restart_loop", func() (string, error) {
+		ws.loopMu.Lock()
+		if ws.loopCancel != nil {
+			ws.loopCancel()
+		}
+		ws.loopRunning = false
+		ws.loopConsecFail = 0
+		ws.loopMu.Unlock()
+		return "已中断异常的模拟循环（等待用户重新 start）", nil
+	})
+
+	// 4. 修复回调：数据损坏 → 回退最近快照（按世界动态注册）
+	for name := range ws.worlds {
+		h.RegisterHealer("rewind_"+name, ws.healRewind(name))
+	}
+
+	// 5. 启动监测循环（15s 一轮；panic 兜底不中断）
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Printf(" [自愈] 监测循环 panic，已恢复: %v\n", r)
+			}
+		}()
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			h.Tick()
+		}
+	}()
+	fmt.Println(" [自愈] 监测与自动修复已启用（15s 一轮）")
+}
+
+// healLLMConfig 修复 api.json 缺失：生成模板（用户填入 base_url/model 后启用 LLM）。
+func (ws *worldServer) healLLMConfig() (string, error) {
+	path := filepath.Join(ws.baseDir, "..", "api.json")
+	if _, err := os.Stat(path); err == nil {
+		return "api.json 已存在，无需重建", nil
+	}
+	cfg := config.DefaultAPIConfig()
+	b, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, b, 0644); err != nil {
+		return "", err
+	}
+	return "已生成 api.json 模板（填入 base_url/model 并重启后启用 LLM）", nil
+}
+
+// healRewind 修复数据损坏：回退到最近快照并重建实例（覆盖 world_state.json 等）。
+func (ws *worldServer) healRewind(name string) selfheal.HealFunc {
+	return func() (string, error) {
+		inst := ws.worlds[name]
+		if inst == nil || inst.sim == nil {
+			return "世界无活动实例，无需回退", nil
+		}
+		// 先停循环，避免回退过程中写入
+		ws.loopMu.Lock()
+		if ws.loopCancel != nil {
+			ws.loopCancel()
+		}
+		ws.loopRunning = false
+		ws.loopCancel = nil
+		ws.loopConsecFail = 0
+		ws.loopMu.Unlock()
+
+		meta, err := inst.sim.RewindTo(inst.engine.State().Day)
+		if err != nil {
+			return "回退失败: " + err.Error(), err
+		}
+		// 刷新 engine 内存状态 + 重建 Simulator
+		if err := inst.engine.Load(filepath.Join(inst.dir, "world_state.json")); err != nil {
+			return "回退后状态刷新失败: " + err.Error(), err
+		}
+		inst.sim = sim.NewSimulator(inst.engine, inst.dir)
+		inst.heroName = inst.sim.HeroName()
+		inst.applyLLM()
+		// 重新注册该世界的数据修复回调（sim 已重建）
+		ws.heal.RegisterHealer("rewind_"+name, ws.healRewind(name))
+		return fmt.Sprintf("已回退到 Day%d 快照（%s）", meta.Day, meta.Reason), nil
+	}
+}
+
+// handleSelfHealStatus GET /api/selfheal/status — 自愈模块整体状态（前端监测面板）
+func (ws *worldServer) handleSelfHealStatus(w http.ResponseWriter, r *http.Request) {
+	if ws.heal == nil {
+		ws.writeJSON(w, 200, map[string]any{"enabled": false})
+		return
+	}
+	ws.writeJSON(w, 200, ws.heal.Status())
+}
+
+// handleSelfHealIncidents GET /api/selfheal/incidents — 检测与修复记录（最新在前）
+func (ws *worldServer) handleSelfHealIncidents(w http.ResponseWriter, r *http.Request) {
+	if ws.heal == nil {
+		ws.writeJSON(w, 200, map[string]any{"incidents": []any{}})
+		return
+	}
+	ws.writeJSON(w, 200, map[string]any{
+		"incidents": ws.heal.Incidents(),
+	})
+}
+
+// themeCardIDs 返回已加载题材卡片 id 列表（供前端"沉淀卡片"提示）。
+func (ws *worldServer) themeCardIDs() []string {
+	// 研究智能体未暴露出卡片列表，从卡片文件目录扫描（wsdata/themes）
+	dir := filepath.Join(ws.baseDir, "..", "themes")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return []string{}
+	}
+	ids := []string{}
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(strings.ToLower(e.Name()), ".json") {
+			ids = append(ids, strings.TrimSuffix(e.Name(), ".json"))
+		}
+	}
+	sort.Strings(ids)
+	return ids
+}
+
 func (ws *worldServer) writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
@@ -612,7 +1086,7 @@ func (ws *worldServer) handleInit(w http.ResponseWriter, r *http.Request) {
 		req.Weather = "晴"
 	}
 	base := inst.engine.State().Revision
-	// 世界初始化 Agent（按世界书生成主角/NPC/地点——修仙世界就该有砍柴少年，而不是都市待业青年）
+	// 世界初始化 Agent（按世界书生成主角/NPC/地点——一切由世界书驱动）
 	// 独立 context：客户端断连不影响初始化完成
 	initCtx, initCancel := context.WithTimeout(context.Background(), 240*time.Second)
 	defer initCancel()
@@ -642,10 +1116,25 @@ func (ws *worldServer) handleInit(w http.ResponseWriter, r *http.Request) {
 			Changes:      plan.Changes(hero),
 			Reason:       "世界初始化（按世界书生成）",
 		})
+		// 清理 fallback 残留：之前若因 LLM 失败走过占位模板（主角名="主角"），
+		// 现在 LLM 成功生成了真实主角，删掉占位实体，避免"双主角"污染
+		if hero != "主角" {
+			if _, exists := inst.engine.State().Entities["主角"]; exists {
+				proposals = append(proposals, engine.Proposal{
+					CommandID:    "init-clean",
+					ActorID:      "world_agent",
+					BaseRevision: base + 1,
+					Type:         "state_change",
+					Changes:      []engine.Change{{Path: "entities.主角.", Op: "del"}},
+					Reason:       "清理 LLM 失败时生成的占位主角",
+				})
+			}
+		}
 	} else {
-		// fallback：LLM 不可用/失败 → 通用模板（保持兼容，但新世界建议配置 LLM 后 init）
+		// fallback：LLM 不可用/失败 → 最小化通用模板（只建主角骨架，内容由世界书驱动）
+		// 注意：不做任何世界特定预设——主角名/职业/地点用占位，NPC 留待后续事件自然引入
 		if hero == "" {
-			hero = "林默"
+			hero = "主角" // 通用占位名；LLM 可用时会被世界书生成的真实主角名替换
 		}
 		inst.heroName = hero
 		if inst.sim != nil {
@@ -654,47 +1143,32 @@ func (ws *worldServer) handleInit(w http.ResponseWriter, r *http.Request) {
 		if inst.novelW != nil {
 			inst.novelW.SetHeroName(hero)
 		}
-		fmt.Printf(" [世界模拟] 初始化方案：LLM 不可用，用通用模板\n")
+		fmt.Printf(" [世界模拟] 初始化方案：LLM 不可用，用最小通用模板（主角=%s）\n", hero)
 		proposals = append(proposals, engine.Proposal{
 			CommandID: "init-1", ActorID: "world_agent", BaseRevision: base, Type: "state_change",
 			Changes: []engine.Change{
-				{Path: "world_level.global_events", Op: "add", Value: "城市建立：" + req.City},
+				{Path: "world_level.global_events", Op: "add", Value: "世界开始运转：" + req.City},
 				{Path: "world_level.tension", Op: "set", Value: 0.2},
 			}, Reason: "世界初始化"},
 		)
-		// 主角实体（示例：旧城区·便利店夜班）
+		// 主角实体（仅基础字段；身份/地点/属性由世界书驱动，LLM 可用时自动补齐）
 		proposals = append(proposals, engine.Proposal{
 			CommandID:    "init-2",
 			ActorID:      "world_agent",
 			BaseRevision: base + 1,
 			Type:         "state_change",
 			Changes: []engine.Change{
-				{Path: "entities." + hero + ".location", Op: "set", Value: "旧城区·主角公寓"},
-				{Path: "entities." + hero + ".money", Op: "set", Value: 3200},
-				{Path: "entities." + hero + ".health", Op: "set", Value: 85},
-				{Path: "entities." + hero + ".job", Op: "set", Value: "待业青年"},
+				{Path: "entities." + hero + ".location", Op: "set", Value: "出生地"},
+				{Path: "entities." + hero + ".money", Op: "set", Value: 0},
+				{Path: "entities." + hero + ".health", Op: "set", Value: 90},
+				{Path: "entities." + hero + ".job", Op: "set", Value: "普通人"},
 				{Path: "entities." + hero + ".alive", Op: "set", Value: true},
 				{Path: "entities." + hero + ".status", Op: "set", Value: "active"},
 				{Path: "entities." + hero + ".extra.role", Op: "set", Value: "protagonist"},
 			},
 			Reason: "主角诞生",
 		})
-		// 常驻 NPC 示例：老陈
-		proposals = append(proposals, engine.Proposal{
-			CommandID:    "init-3",
-			ActorID:      "world_agent",
-			BaseRevision: base + 2,
-			Type:         "state_change",
-			Changes: []engine.Change{
-				{Path: "entities.老陈.location", Op: "set", Value: "旧城区"},
-				{Path: "entities.老陈.job", Op: "set", Value: "店主"},
-				{Path: "entities.老陈.status", Op: "set", Value: "active"},
-				{Path: "entities.老陈.extra.role", Op: "set", Value: "important_npc"},
-				{Path: "entities.老陈.extra.profile", Op: "set", Value: "老陈：旧城区开店的中年人，表面话不多但消息灵通；似乎知道很多不该知道的事，身份成谜（真实身份由世界书设定决定，他清楚自己的过去，主角不知道）。"},
-				{Path: "entities.老陈.extra.memory", Op: "set", Value: "记得常来的年轻人（主角）；最近注意到浮城暗处有些不对劲的动静，心里不安。"},
-			},
-			Reason: "常驻NPC登场",
-		})
+		// 不预设常驻 NPC：配角由世界书（A3/A4）与事件自然引入，避免套用别的世界的模板
 	}
 
 	var lastErr error
@@ -727,6 +1201,7 @@ func (ws *worldServer) handleInit(w http.ResponseWriter, r *http.Request) {
 	}
 	inst.applyLLM() // 自动启用 LLM（api.json 配置有效时）——init 后模拟立即走真实 Agent
 	inst.created = true
+	logging.InfoW(inst.name, "init", fmt.Sprintf("世界初始化完成：主角=%s，Day1，实体=%d", hero, len(inst.engine.State().Entities)), map[string]any{"protagonist": hero, "entities": len(inst.engine.State().Entities)})
 	ws.writeJSON(w, 200, map[string]any{
 		"ok":          true,
 		"world":       req.WorldName,
@@ -782,6 +1257,15 @@ func (ws *worldServer) handleSimDay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 后台循环进行中禁止手动跑天：同一 Simulator 被并发 RunDay 会数据竞争（day 双跳/编年史错乱）
+	ws.loopMu.Lock()
+	loopBusy := ws.loopRunning && ws.loopWorld == inst.name
+	ws.loopMu.Unlock()
+	if loopBusy {
+		ws.writeJSON(w, 409, map[string]any{"ok": false, "error": "后台模拟循环进行中，请先停止再手动跑天"})
+		return
+	}
+
 	var req struct {
 		Days int    `json:"days"` // 默认1，可连跑多天
 		Mode string `json:"mode"` // 张力引擎：auto(自适应) | scene | summary | skip
@@ -812,8 +1296,9 @@ func (ws *worldServer) handleSimDay(w http.ResponseWriter, r *http.Request) {
 			ws.writeJSON(w, 500, map[string]string{"error": "模拟失败: " + err.Error()})
 			return
 		}
-		inst.autoSnapshot() // 每30天自动存档（时间回退锚点）
+		inst.autoSnapshot() // 每7天自动存档（时间回退锚点）+ 风险前存档
 		results = append(results, res)
+		inst.lastDay = res // 供前端"今日对话/事件"面板（页面刷新/定时刷新直接拉取）
 		if res.Paused {
 			break // 遇到抉择点暂停（§10）
 		}
@@ -825,6 +1310,26 @@ func (ws *worldServer) handleSimDay(w http.ResponseWriter, r *http.Request) {
 		"revision": inst.engine.State().Revision,
 		"day":      inst.engine.State().Day,
 		"cache":    llm.CacheStats(),
+	})
+}
+
+// GET /api/world/today — 最近一天的模拟结果（今日对话/今日事件），供前端面板
+// 手动跑天和后台循环都会更新 inst.lastDay；无数据时返回空（前端显示"无"）
+func (ws *worldServer) handleToday(w http.ResponseWriter, r *http.Request) {
+	inst := ws.inst()
+	if inst == nil {
+		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": "没有可用世界，请先创建"})
+		return
+	}
+	if inst.lastDay == nil {
+		ws.writeJSON(w, 200, map[string]any{"ok": true, "day": 0, "events": []any{}, "dialogue": []any{}})
+		return
+	}
+	ws.writeJSON(w, 200, map[string]any{
+		"ok":       true,
+		"day":      inst.lastDay.Day,
+		"events":   inst.lastDay.Events,
+		"dialogue": inst.lastDay.Dialogue,
 	})
 }
 
@@ -977,10 +1482,12 @@ func (ws *worldServer) handleWorldSelect(w http.ResponseWriter, r *http.Request)
 // body: {"name":"...", "worldbook":"世界书名（可选）", "theme":"主题包名（可选：经典修仙/都市异能/克苏鲁异界…）", "desc":"一句话设定（theme 模式下可选，不传则 LLM 按主题包自拟）"}
 func (ws *worldServer) handleWorldCreate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name      string `json:"name"`
-		Worldbook string `json:"worldbook"` // 世界书名（worldbooks/ 池），可选
-		Theme     string `json:"theme"`     // 主题包名（worldbooks/themes/ 池），可选
-		Desc      string `json:"desc"`      // 一句话设定（theme 模式用）
+		Name               string `json:"name"`
+		Worldbook          string `json:"worldbook"`           // 世界书名（worldbooks/ 池），可选
+		Theme              string `json:"theme"`               // 主题包名（worldbooks/themes/ 池），可选
+		Desc               string `json:"desc"`                // 一句话设定（theme 模式用）
+		ResearchID         string `json:"research_id"`         // 研究方案 id（研究结果引导建世界），可选
+		WorldbookDirection string `json:"worldbook_direction"` // 直接传世界书方向 markdown，可选
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Name) == "" {
 		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": "需要 name 字段"})
@@ -1028,8 +1535,48 @@ func (ws *worldServer) handleWorldCreate(w http.ResponseWriter, r *http.Request)
 				_ = os.WriteFile(filepath.Join(ws.baseDir, "..", "worldbooks", name+".md"), []byte(wbText), 0644)
 				wbName = name
 				fmt.Printf(" [世界模拟] 世界书已生成（主题包：%s）：%s\n", req.Theme, name)
+				logging.Info(logging.CatWorldCreate, fmt.Sprintf("世界书已生成（主题包：%s）：%s", req.Theme, name), map[string]any{"theme": req.Theme, "worldbook": name, "world": name})
 			} else {
 				fmt.Printf(" [世界模拟] 世界书生成失败（3次重试后），回退模板\n")
+				logging.Error(logging.CatWorldCreate, "世界书生成失败（3次重试后），回退模板", map[string]any{"theme": req.Theme, "world": name})
+			}
+		}
+	}
+	// 研究结果引导模式：用"世界书方向"（研究智能体产物）作为蓝本生成完整世界书
+	// 优先级：直接传的 worldbook_direction > research_id 存档里的 direction
+	if wbName == "" && req.Theme == "" {
+		direction := req.WorldbookDirection
+		if strings.TrimSpace(direction) == "" && req.ResearchID != "" && ws.research != nil {
+			if rec, err := ws.research.LoadProposal(req.ResearchID); err == nil {
+				direction = rec.Direction
+			}
+		}
+		if strings.TrimSpace(direction) != "" {
+			desc := req.Desc
+			if desc == "" {
+				desc = "按这份世界书方向的设定，生成一个有生活质感、主角从最底层逐步成长的世界。"
+			}
+			var wbText string
+			for attempt := 0; attempt < 3; attempt++ {
+				genCtx, genCancel := context.WithTimeout(context.Background(), 600*time.Second)
+				var gerr error
+				wbText, gerr = worldbook.GenWorldbookLLM(genCtx, ws.apiCfg, direction, desc)
+				genCancel()
+				if gerr == nil && strings.TrimSpace(wbText) != "" {
+					break
+				}
+				fmt.Printf(" [世界模拟] 世界书生成第%d次失败(%v)，重试…\n", attempt+1, gerr)
+				time.Sleep(3 * time.Second)
+			}
+			if strings.TrimSpace(wbText) != "" {
+				wbText = worldbook.TrimWorldbook(wbText)
+				_ = os.WriteFile(filepath.Join(ws.baseDir, "..", "worldbooks", name+".md"), []byte(wbText), 0644)
+				wbName = name
+				fmt.Printf(" [世界模拟] 世界书已生成（研究结果引导）：%s\n", name)
+				logging.Info(logging.CatWorldCreate, fmt.Sprintf("世界书已生成（研究引导）：%s", name), map[string]any{"research_id": req.ResearchID, "worldbook": name, "world": name})
+			} else {
+				fmt.Printf(" [世界模拟] 世界书生成失败（研究结果引导，3次重试后）\n")
+				logging.Error(logging.CatWorldCreate, "世界书生成失败（研究引导，3次重试后）", map[string]any{"research_id": req.ResearchID, "world": name})
 			}
 		}
 	}
@@ -1044,6 +1591,7 @@ func (ws *worldServer) handleWorldCreate(w http.ResponseWriter, r *http.Request)
 	ws.worlds[name] = wi
 	ws.current = name // 创建后自动切换
 	fmt.Printf(" [世界模拟] 新世界已创建：%s\n", name)
+	logging.Info(logging.CatWorldCreate, fmt.Sprintf("新世界已创建：%s", name), map[string]any{"world": name, "worldbook": wbName, "theme": req.Theme, "research_id": req.ResearchID})
 	ws.writeJSON(w, 200, map[string]any{"ok": true, "world": name, "current": ws.current})
 }
 
@@ -1121,6 +1669,94 @@ func (ws *worldServer) handleTokenStats(w http.ResponseWriter, r *http.Request) 
 	ws.writeJSON(w, 200, llm.SpanSummary())
 }
 
+// GET /api/llm/stats — LLM 全局用量统计（实时 + 当前窗口）
+// 返回：span 汇总（按环节）+ 当前小时/当天的 token 消耗
+func (ws *worldServer) handleLLMStats(w http.ResponseWriter, r *http.Request) {
+	// 获取当前小时和当天的统计记录
+	hourRecords := llm.LoadHistory("hour")
+	dayRecords := llm.LoadHistory("day")
+
+	// 提取最新一条记录作为当前窗口统计
+	var currentHour, currentDay map[string]any
+	if len(hourRecords) > 0 {
+		latest := hourRecords[len(hourRecords)-1]
+		currentHour = map[string]any{
+			"ts":         latest.TS,
+			"prompt":     latest.Prompt,
+			"completion": latest.Completion,
+			"cached":     latest.Cached,
+			"calls":      latest.Calls,
+			"failures":   latest.Failures,
+			"total":      latest.Total(),
+		}
+	}
+	if len(dayRecords) > 0 {
+		latest := dayRecords[len(dayRecords)-1]
+		currentDay = map[string]any{
+			"ts":         latest.TS,
+			"prompt":     latest.Prompt,
+			"completion": latest.Completion,
+			"cached":     latest.Cached,
+			"calls":      latest.Calls,
+			"failures":   latest.Failures,
+			"total":      latest.Total(),
+		}
+	}
+
+	ws.writeJSON(w, 200, map[string]any{
+		"ok":           true,
+		"spans":        llm.SpanSummary(),
+		"current_hour": currentHour,
+		"current_day":  currentDay,
+	})
+}
+
+// GET /api/llm/stats/history — LLM 用量历史（按时间窗口聚合）
+// 查询参数：window=hour|day（默认 day）
+func (ws *worldServer) handleLLMStatsHistory(w http.ResponseWriter, r *http.Request) {
+	window := r.URL.Query().Get("window")
+	if window == "" {
+		window = "day"
+	}
+	if window != "hour" && window != "day" {
+		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": "window 参数需为 hour 或 day"})
+		return
+	}
+
+	records := llm.LoadHistory(window)
+	// 转换为更友好的格式（包含 total 字段）
+	type recordView struct {
+		TS         string `json:"ts"`
+		Window     string `json:"window"`
+		Prompt     int    `json:"prompt"`
+		Completion int    `json:"completion"`
+		Cached     int    `json:"cached"`
+		Calls      int    `json:"calls"`
+		Failures   int    `json:"failures"`
+		Total      int    `json:"total"`
+	}
+	views := make([]recordView, 0, len(records))
+	for _, rec := range records {
+		views = append(views, recordView{
+			TS:         rec.TS,
+			Window:     rec.Window,
+			Prompt:     rec.Prompt,
+			Completion: rec.Completion,
+			Cached:     rec.Cached,
+			Calls:      rec.Calls,
+			Failures:   rec.Failures,
+			Total:      rec.Total(),
+		})
+	}
+
+	ws.writeJSON(w, 200, map[string]any{
+		"ok":      true,
+		"window":  window,
+		"count":   len(views),
+		"records": views,
+	})
+}
+
 func mustRead(p string) []byte {
 	b, _ := os.ReadFile(p)
 	return b
@@ -1166,7 +1802,7 @@ func (ws *worldServer) handleNovelGenerate(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	plans := inst.novelW.PlanChapters(chronicle, thinkings)
+	plans := inst.novelW.PlanChapters(r.Context(), chronicle, thinkings)
 	if len(plans) == 0 {
 		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": "没有可写的章节"})
 		return
@@ -1292,7 +1928,7 @@ func (ws *worldServer) handleNovelList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	chronicle := inst.sim.Chronicle()
-	plans := inst.novelW.PlanChapters(chronicle, inst.sim.Thinkings())
+	plans := inst.novelW.PlanChapters(r.Context(), chronicle, inst.sim.Thinkings())
 	if plans == nil {
 		plans = []novel.ChapterPlan{}
 	}

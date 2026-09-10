@@ -11,7 +11,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -26,7 +26,7 @@ jobs:
             exe=""
             [ "$os" = "windows" ] && exe=".exe"
             echo "==> building $os/$arch"
-            GOOS=$os GOARCH=$arch CGO_ENABLED=0 go build -ldflags "-s -w" -o "dist/worldsim-$os-$arch$exe" .
+            GOOS=$os GOARCH=$arch CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o "dist/worldsim-$os-$arch$exe" .
           done
 
       - name: Package
@@ -80,7 +80,7 @@ jobs:
           ls -la
 
       - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             dist/*.tar.gz

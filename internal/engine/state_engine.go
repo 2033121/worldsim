@@ -35,6 +35,7 @@ type WorldLevel struct {
 	Locations       map[string]Location `json:"locations,omitempty"` // 地点系统（P0-2：状态会变）
 	Tension         float64             `json:"tension"`
 	TensionOverride *TensionOverride    `json:"tension_override,omitempty"`
+	Background      map[string]string   `json:"background,omitempty"` // 背景人物池：名字→一句话身份（还不是NPC，可随剧情晋升为配角）
 }
 
 // Location 地点：有状态的场景对象（会随剧情变化）
@@ -70,6 +71,13 @@ type Entity struct {
 	Status       string             `json:"status"` // active | departed
 	Relationship map[string]float64 `json:"relationship,omitempty"`
 	Extra        map[string]any     `json:"extra,omitempty"`
+	// Stats 世界书驱动的动态属性集：属性名/单位/数值由世界书的力量体系与资源体系决定，
+	// 不属于引擎固定字段（引擎不硬编码任何具体属性名，只做通用读写）。
+	Stats map[string]any `json:"stats,omitempty"`
+
+	// Assets资产表：键与值均由世界书/主题包驱动（现金/灵石/物资/弹药…），
+	//供世界→小说播种（bridge）等消费方读取，引擎不硬编码任何资产名。
+	Assets map[string]any `json:"assets,omitempty"`
 }
 
 // ---------- 状态变更提案（§1.1） ----------
@@ -387,7 +395,7 @@ func ApplyPath(s *WorldState, c Change) error {
 		name := parts[1]
 		ent, ok := s.Entities[name]
 		if !ok {
-			ent = Entity{Alive: true, Status: "active", Health: 100, Relationship: map[string]float64{}}
+			ent = Entity{Alive: true, Status: "active", Health: 100, Relationship: map[string]float64{}, Stats: map[string]any{}}
 		}
 		field := parts[2]
 		var err error
@@ -461,6 +469,14 @@ func setEntityField(e *Entity, field string, v any, op string, rest []string) er
 		if len(rest) > 0 {
 			e.Extra[rest[0]] = v
 		}
+	case "stats":
+		// 世界书驱动的动态属性集：属性名由世界书决定，引擎只做通用读写
+		if e.Stats == nil {
+			e.Stats = map[string]any{}
+		}
+		if len(rest) > 0 {
+			e.Stats[rest[0]] = v
+		}
 	}
 	return nil
 }
@@ -490,6 +506,23 @@ func addEntityField(e *Entity, field string, v any, rest []string) error {
 			}
 			e.Relationship[rest[0]] += f
 		}
+	case "stats":
+		// 动态属性集：支持数值加减与整体设置
+		if e.Stats == nil {
+			e.Stats = map[string]any{}
+		}
+		if len(rest) > 0 {
+			key := rest[0]
+			cur, ok := toFloat(e.Stats[key])
+			if !ok {
+				cur = 0
+			}
+			f, ok := toFloat(v)
+			if !ok {
+				return fmt.Errorf("stats.%s 需数值", key)
+			}
+			e.Stats[key] = cur + f
+		}
 	}
 	return nil
 }
@@ -513,6 +546,19 @@ func applyWorldLevel(s *WorldState, rest []string, c Change) error {
 		if c.Op == "add" {
 			ev, _ := c.Value.(string)
 			s.WorldLevel.GlobalEvents = append(s.WorldLevel.GlobalEvents, ev)
+		}
+	case "background":
+		// world_level.background.{名}=一句话身份（背景人物池）；del 移除
+		if len(rest) < 2 {
+			return fmt.Errorf("background 路径需至少2段")
+		}
+		if s.WorldLevel.Background == nil {
+			s.WorldLevel.Background = map[string]string{}
+		}
+		if c.Op == "del" {
+			delete(s.WorldLevel.Background, rest[1])
+		} else if v, ok := c.Value.(string); ok {
+			s.WorldLevel.Background[rest[1]] = v
 		}
 	case "locations":
 		// world_level.locations.{名}.{state|note|type}
@@ -616,6 +662,10 @@ func getFloat(s *WorldState, path string) (float64, bool) {
 				return ent.Health, true
 			case "money":
 				return ent.Money, true
+			case "stats":
+				if len(parts) >= 4 {
+					return toFloat(ent.Stats[parts[3]])
+				}
 			}
 		}
 	}

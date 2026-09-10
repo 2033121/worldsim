@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -23,7 +24,12 @@ type ChatRequest struct {
 	Stream        bool           `json:"stream,omitempty"`
 	StreamOptions *streamOptions `json:"stream_options,omitempty"`
 	MaxTokens     int            `json:"max_tokens,omitempty"`
+	Tools         []Tool         `json:"tools,omitempty"` // 工具调用（function calling）
 }
+
+// llmSem 全局 LLM 并发闸门：所有 HTTP 调用（流式/同步）共用，
+// 限制同时打到中转站的请求数，防止并行 Agent（角色档案/事件生成等）把上游并发打爆（429）。
+var llmSem = make(chan struct{}, 3)
 
 type streamOptions struct {
 	IncludeUsage bool `json:"include_usage"`
@@ -74,9 +80,11 @@ func CacheStats() string {
 }
 
 type Message struct {
-	Role             string `json:"role"`
-	Content          string `json:"content"`
-	ReasoningContent string `json:"reasoning_content,omitempty"` // 推理模型思考过程（正文为空时兜底）
+	Role             string     `json:"role"`
+	Content          string     `json:"content"`
+	ReasoningContent string     `json:"reasoning_content,omitempty"` // 推理模型思考过程（正文为空时兜底）
+	ToolCallID       string     `json:"tool_call_id,omitempty"`      // 工具结果消息回传时使用
+	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`        // 模型请求的工具调用
 }
 
 type ChatResponse struct {
@@ -164,7 +172,7 @@ func FetchModelContextWindow(apiCfg *config.APIConfig) int {
 		req.Header.Set("Authorization", "Bearer "+apiCfg.APIKey)
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := llmHTTPClient(apiCfg, 10*time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0
@@ -289,58 +297,10 @@ func CallAPIMessages(ctx context.Context, apiCfg *config.APIConfig, messages []M
 
 // CallAPIMessagesSync 同步 HTTP 调用（仅作流式失败时的回退）。
 func CallAPIMessagesSync(ctx context.Context, apiCfg *config.APIConfig, messages []Message) (res CompletionResult, err error) {
-	fullURL := normalizeURL(apiCfg)
-	tracker := TaskTokensFromContext(ctx)
-	tracker.beginCall(messages)
-	var lastUsage *tokenUsage
-	defer func() {
-		// 环节级用量记录（span 从 ctx 取，未标注则不统计；失败也计 Failures）
-		RecordSpan(ctx, apiCfg.Model, lastUsage, countMessageRunes(messages), utf8.RuneCountInString(res.Content), err)
-	}()
-
-	reqBody := ChatRequest{
-		Model:     apiCfg.Model,
-		Messages:  messages,
-		MaxTokens: apiCfg.MaxTokens,
-	}
-
-	bts, err := json.Marshal(reqBody)
+	chatResp, err := chatOnceSync(ctx, apiCfg, messages, nil)
 	if err != nil {
 		return CompletionResult{}, err
 	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", fullURL, bytes.NewBuffer(bts))
-	if err != nil {
-		return CompletionResult{}, err
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	if apiCfg.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiCfg.APIKey)
-	}
-
-	timeout := time.Duration(apiCfg.HTTPTimeoutSeconds) * time.Second
-	client := &http.Client{Timeout: timeout}
-	resp, err := client.Do(req)
-	if err != nil {
-		return CompletionResult{}, err
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return CompletionResult{}, err
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return CompletionResult{}, fmt.Errorf("API 响应错误，状态码: %d, 返回内容: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	var chatResp ChatResponse
-	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		return CompletionResult{}, err
-	}
-
 	if len(chatResp.Choices) > 0 {
 		content := chatResp.Choices[0].Message.Content
 		reasoning := chatResp.Choices[0].Message.ReasoningContent
@@ -349,26 +309,100 @@ func CallAPIMessagesSync(ctx context.Context, apiCfg *config.APIConfig, messages
 			content = reasoning
 			reasoning = ""
 		}
-		if chatResp.Usage != nil {
-			lastUsage = chatResp.Usage // 供 defer 环节级记录
-			if tracker != nil {
-				tracker.finishCall(chatResp.Usage.PromptTokens, chatResp.Usage.CompletionTokens, true, messages, content)
-			}
-			// 前缀缓存统计（独立于 tracker：有 usage 就记录）
-			cached := 0
-			if chatResp.Usage.PromptTokensDetails != nil {
-				cached = chatResp.Usage.PromptTokensDetails.CachedTokens
-			}
-			if chatResp.Usage.PromptCacheHitTokens > cached {
-				cached = chatResp.Usage.PromptCacheHitTokens
-			}
-			RecordCacheUsage(cached, chatResp.Usage.PromptTokens-cached)
-		} else if tracker != nil {
-			tracker.finishCall(0, 0, false, messages, content)
-		}
 		return CompletionResult{Content: content, ReasoningContent: reasoning, FinishReason: chatResp.Choices[0].FinishReason}, nil
 	}
 	return CompletionResult{}, fmt.Errorf("接口未响应有效 Choices 文本")
+}
+
+// contentOf 取响应首条选择的消息正文（用于 span/token 统计）
+func contentOf(c ChatResponse) string {
+	if len(c.Choices) > 0 {
+		return c.Choices[0].Message.Content
+	}
+	return ""
+}
+
+// chatOnceSync 执行一次非流式 chat 请求，返回完整原始响应（含 tool_calls）。
+// 供 CallAPIMessagesSync 与工具调用循环共用，避免重复的 HTTP/解析/用量统计逻辑。
+func chatOnceSync(ctx context.Context, apiCfg *config.APIConfig, messages []Message, tools []Tool) (chatResp ChatResponse, err error) {
+	// 全局并发闸门（与流式共用）：等待槽位时也可被 ctx 取消，避免取消失效
+	select {
+	case llmSem <- struct{}{}:
+	case <-ctx.Done():
+		return ChatResponse{}, ctx.Err()
+	}
+	defer func() { <-llmSem }()
+	fullURL := normalizeURL(apiCfg)
+	tracker := TaskTokensFromContext(ctx)
+	ctx = WithStart(ctx) // 记录调用耗时（供 RecordSpan 写入日志）
+	tracker.beginCall(messages)
+	var lastUsage *tokenUsage
+	defer func() {
+		// 环节级用量记录（span 从 ctx 取，未标注则不统计；失败也计 Failures）
+		RecordSpan(ctx, apiCfg.Model, lastUsage, countMessageRunes(messages), utf8.RuneCountInString(contentOf(chatResp)), err)
+	}()
+
+	reqBody := ChatRequest{
+		Model:     apiCfg.Model,
+		Messages:  messages,
+		MaxTokens: apiCfg.MaxTokens,
+		Tools:     tools,
+	}
+
+	bts, err := json.Marshal(reqBody)
+	if err != nil {
+		return ChatResponse{}, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", fullURL, bytes.NewBuffer(bts))
+	if err != nil {
+		return ChatResponse{}, err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if apiCfg.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiCfg.APIKey)
+	}
+
+	timeout := time.Duration(apiCfg.HTTPTimeoutSeconds) * time.Second
+	client := llmHTTPClient(apiCfg, timeout)
+	resp, err := client.Do(req)
+	if err != nil {
+		return ChatResponse{}, err
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return ChatResponse{}, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return ChatResponse{}, fmt.Errorf("API 响应错误，状态码: %d, 返回内容: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
+		return ChatResponse{}, err
+	}
+
+	if chatResp.Usage != nil {
+		lastUsage = chatResp.Usage // 供 defer 环节级记录
+		if tracker != nil {
+			tracker.finishCall(chatResp.Usage.PromptTokens, chatResp.Usage.CompletionTokens, true, messages, contentOf(chatResp))
+		}
+		// 前缀缓存统计（独立于 tracker：有 usage 就记录）
+		cached := 0
+		if chatResp.Usage.PromptTokensDetails != nil {
+			cached = chatResp.Usage.PromptTokensDetails.CachedTokens
+		}
+		if chatResp.Usage.PromptCacheHitTokens > cached {
+			cached = chatResp.Usage.PromptCacheHitTokens
+		}
+		RecordCacheUsage(cached, chatResp.Usage.PromptTokens-cached)
+	} else if tracker != nil {
+		tracker.finishCall(0, 0, false, messages, contentOf(chatResp))
+	}
+	return chatResp, nil
 }
 
 func CallAPIWithRetry(ctx context.Context, apiCfg *config.APIConfig, system, user string) string {
@@ -449,9 +483,39 @@ func CallAPIStream(ctx context.Context, apiCfg *config.APIConfig, system, user s
 }
 
 // CallAPIStreamMessages 以完整的多轮消息数组调用 API（流式）。
+// llmHTTPClient 构造保守的 HTTP 客户端：强制 HTTP/1.1 + 禁用连接复用，
+// 兼容阿里云 SLB 等对 Go 默认 Transport（HTTP/2 + keep-alive）支持不佳的上游。
+func llmHTTPClient(apiCfg *config.APIConfig, timeout time.Duration) *http.Client {
+	tr := &http.Transport{
+		ForceAttemptHTTP2:   false,
+		DisableKeepAlives:   true,
+		MaxIdleConns:        1,
+		MaxIdleConnsPerHost: 1,
+	}
+	// 可选 HTTP CONNECT 代理：容器内经宿主直连中转站（Docker/WSL2 NAT 会掐断到部分
+	// 阿里云 ALB 的 TLS 握手，宿主直连正常）。仅当 api.json 配置了 proxy_url 时启用。
+	if apiCfg != nil && strings.TrimSpace(apiCfg.ProxyURL) != "" {
+		if u, err := url.Parse(strings.TrimSpace(apiCfg.ProxyURL)); err == nil {
+			tr.Proxy = http.ProxyURL(u)
+		}
+	}
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: tr,
+	}
+}
+
 func CallAPIStreamMessages(ctx context.Context, apiCfg *config.APIConfig, messages []Message, onChunk func(string)) (res CompletionResult, err error) {
+	// 全局并发闸门：限制同时打到中转站的请求数；等待槽位时也可被 ctx 取消
+	select {
+	case llmSem <- struct{}{}:
+	case <-ctx.Done():
+		return CompletionResult{}, ctx.Err()
+	}
+	defer func() { <-llmSem }()
 	fullURL := normalizeURL(apiCfg)
 	tracker := TaskTokensFromContext(ctx)
+	ctx = WithStart(ctx) // 记录调用耗时（供 RecordSpan 写入日志）
 	tracker.beginCall(messages)
 	var streamUsage *tokenUsage
 	defer func() {
@@ -483,7 +547,7 @@ func CallAPIStreamMessages(ctx context.Context, apiCfg *config.APIConfig, messag
 	}
 
 	timeout := time.Duration(apiCfg.HTTPTimeoutSeconds) * time.Second
-	client := &http.Client{Timeout: timeout}
+	client := llmHTTPClient(apiCfg, timeout)
 	resp, err := client.Do(req)
 	if err != nil {
 		return CompletionResult{}, err

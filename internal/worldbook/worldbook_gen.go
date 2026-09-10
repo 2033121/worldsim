@@ -45,7 +45,9 @@ func GenWorldbookLLM(ctx context.Context, apiCfg *config.APIConfig, themeContent
 3. 生活质感要具体（杂役的糙米饭/便利店的冷柜嗡鸣/营地的限时供水），让世界像真有人在过。
 4. 只输出世界书 Markdown，不要其他文字。`
 	user := fmt.Sprintf("主题包要素池：\n%s\n\n用户设定：\n%s\n\n请生成世界书。", themeContent, userDesc)
-	return llm.CallAPITierSync(ctx, apiCfg, "normal", system, user)
+	// 用流式优先（CallAPITier → CallAPIMessages 流式优先）：同步模式下中转站网关
+	// 对长时间生成会返回 504/EOF（完整世界书常需 5+ 分钟），流式持续收 chunk 可避免。
+	return llm.CallAPITier(ctx, apiCfg, "normal", system, user)
 }
 
 // TrimWorldbook 清洗 LLM 输出：去掉 markdown 代码块包裹（若 LLM 画蛇添足）

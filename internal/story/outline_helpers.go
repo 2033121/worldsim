@@ -119,13 +119,16 @@ func mergeOutlinePromptData(base map[string]string, cfg *config.Config, settings
 	return merged
 }
 
-func finalizeOutlinePrompt(template, rendered string, cfg *config.Config, settings *ProjectSettings) string {
+func finalizeOutlinePrompt(template, rendered string, cfg *config.Config, settings *ProjectSettings, skills []Skill) string {
 	lang := cfg.Language
 	minLen, maxLen := calcOutlineLengthRange(cfg.Story.TargetWordsPerChapter)
 	rendered = appendIfMissingPlaceholder(template, rendered, "{{.CharacterList}}", formatCharacterListForOutline(settings, lang))
 	if !strings.Contains(template, "{{.OutlineMinWords}}") {
 		block := formatOutlineLengthRequirementBlock(minLen, maxLen, lang) + "\n" + formatOutlineStructureRequirementBlock(lang)
 		rendered += "\n\n" + block
+	}
+	if skillsContent := FormatSkillsContent(GetEnabledSkills(skills, cfg.SkillConfig)); skillsContent != "" {
+		rendered += "\n\n" + skillsContent
 	}
 	return rendered
 }

@@ -25,7 +25,7 @@ WorldSim 是一个运行在本机（端口 48091）的多Agent世界模拟器：
 - **就绪度驱动**：模拟不按天数结束，按"素材够不够写小说"（完成段落≥3 + 戏剧素材≥12 + 伏笔回收≥1 + 张力≥0.4）自动判定，就绪后可生成小说。
 - **岔口决策队列**：剧情遇到多方向岔口时 AI 自动代决（不阻塞），用户可随时翻案改选，写手按用户方向写。
 - **双控制入口**：
-  - AI 控制：`worldsim` 沙盒包（use_package 激活，22个工具）
+  - AI 控制：`worldsim` 沙盒包（use_package 激活，26个工具）
   - 用户控制：WebUI 可视化控制台 `http://127.0.0.1:48091`（世界状态/决策改选/循环开关/就绪度/小说阅读）
 
 ## 标准工作流（AI 代用户操作时按此顺序）
@@ -37,7 +37,7 @@ WorldSim 是一个运行在本机（端口 48091）的多Agent世界模拟器：
    - 手动小步：`world_run_day`（1-30天，mode=auto）
    - 长时间积累：`world_loop_start`（后台持续跑，到就绪自动停）→ `world_loop_status` 查进度
 5. **查就绪**：`world_readiness`。就绪前可看 `world_state`/`world_chronicle`/`world_decisions` 跟进剧情；**有决策队列时主动告知用户可翻案**（`world_decision_resolve`）。
-6. **写小说**：就绪后 `world_novel_generate`（1-3分钟/章）→ `world_novel_list` → `world_novel_chapter` 读正文。
+6. **写小说**：`world_seed_novel`（把当前世界直接播种成小说项目，零 LLM 调用，到 48090 查大纲/设定）或就绪后 `world_novel_generate`（1-3分钟/章）→ `world_novel_list` → `world_novel_chapter` 读正文。
 7. **用户要自己看**：`world_webui` 给出控制台地址，引导用户打开浏览器操作（翻案/看小说/开关循环）。
 
 ## 关键规则

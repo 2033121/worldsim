@@ -1,0 +1,40 @@
+# 构建上下文排除项（减小镜像构建上下文体积）
+.git
+.github
+.idea
+.vscode
+*.swp
+.DS_Store
+
+# 运行时数据（挂载卷，不进镜像）
+wsdata/
+worlds/
+storys/
+run.log
+*.log
+
+# 构建产物
+worldsim
+worldsim_new
+worldsim.exe
+worldsim_plugin.zip
+*.exe
+*.out
+*.test
+
+# Python 缓存
+__pycache__/
+*.pyc
+.venv/
+
+# 分发产物
+/plugins/
+/tmp/
+/dist/
+/bin/
+
+# 文档（不需要进镜像）
+docs/
+*.md
+!worldbooks/**/*.md
+!material/**/*.md

@@ -252,7 +252,7 @@ func GenerateArcSkeletonAction(ctx context.Context, apiCfg *config.APIConfig, cf
 
 // GenerateArcOutlineAction generates chapter outlines for one arc. Pending
 // chapters inside the range are replaced; accepted ones are refused.
-func GenerateArcOutlineAction(ctx context.Context, apiCfg *config.APIConfig, cfg *config.Config, state *Progress, settings *ProjectSettings, arcID int, requirements, progressPath string, logger *sse.LogBroadcaster) error {
+func GenerateArcOutlineAction(ctx context.Context, apiCfg *config.APIConfig, cfg *config.Config, state *Progress, settings *ProjectSettings, arcID int, requirements, progressPath string, skills []Skill, logger *sse.LogBroadcaster) error {
 	if err := llm.ValidateConfig(apiCfg); err != nil {
 		return err
 	}
@@ -294,7 +294,7 @@ func GenerateArcOutlineAction(ctx context.Context, apiCfg *config.APIConfig, cfg
 		}
 	}
 
-	chapters, err := generateOutlineChaptersOnly(ctx, apiCfg, cfg, settings, cfg.Prompts.ArcChapterOutline, baseData, logger)
+	chapters, err := generateOutlineChaptersOnly(ctx, apiCfg, cfg, settings, cfg.Prompts.ArcChapterOutline, baseData, skills, logger)
 	if err != nil {
 		return fmt.Errorf("生成第 %d 卷章纲失败: %w", ai+1, err)
 	}
@@ -346,7 +346,7 @@ func sortChaptersByNum(chs []ChapterState) {
 
 // AppendArcAction adds a new arc after the last one and generates its chapter
 // outlines in the same task. This is the incremental path for endless serials.
-func AppendArcAction(ctx context.Context, apiCfg *config.APIConfig, cfg *config.Config, state *Progress, settings *ProjectSettings, title, goal string, chapterCount int, progressPath string, logger *sse.LogBroadcaster) error {
+func AppendArcAction(ctx context.Context, apiCfg *config.APIConfig, cfg *config.Config, state *Progress, settings *ProjectSettings, title, goal string, chapterCount int, progressPath string, skills []Skill, logger *sse.LogBroadcaster) error {
 	if chapterCount <= 0 {
 		chapterCount = 20
 	}
@@ -374,7 +374,7 @@ func AppendArcAction(ctx context.Context, apiCfg *config.APIConfig, cfg *config.
 	}
 	state.Arcs = append(state.Arcs, arc)
 
-	if err := GenerateArcOutlineAction(ctx, apiCfg, cfg, state, settings, arc.ID, goal, progressPath, logger); err != nil {
+	if err := GenerateArcOutlineAction(ctx, apiCfg, cfg, state, settings, arc.ID, goal, progressPath, skills, logger); err != nil {
 		// Roll back the appended arc so a failed generation leaves no husk.
 		state.Arcs = state.Arcs[:len(state.Arcs)-1]
 		return err

@@ -55,7 +55,7 @@ func DefaultRules() Rules {
 			{Actor: "protagonist", DenyPaths: []string{"world_level.factions"}},
 		},
 		Enums: map[string][]string{
-			"entities.*.status": {"active", "departed", "dead"},
+			"entities.*.status": {"active", "departed", "dead", "mentioned"},
 		},
 	}
 }

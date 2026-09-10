@@ -78,12 +78,23 @@ func (w *Writer) SetMaterialDir(dir string) { w.Material = LoadMaterialBank(dir)
 
 // ---------- 章节计划 ----------
 
-// PlanChapters 事件驱动分章：每章至少包含 DaysPerCh 天且 ≥2 个"戏剧日"（有真实事件/对话/抉择的天）
-// 平淡日（时间流逝）自动并入相邻章当背景——时间不再是分章主角，事件才是
-func (w *Writer) PlanChapters(chronicle []sim.ChronicleEntry, thinkings map[int]string) []ChapterPlan {
+// PlanChapters 事件驱动分章：优先由 LLM 按"事件序列"决策章节划分（哪几个事件合成一章），
+// 失败/未配置 LLM 时回退到启发式规则（按戏剧日+天数）。时间不再是分章主角，事件才是。
+func (w *Writer) PlanChapters(ctx context.Context, chronicle []sim.ChronicleEntry, thinkings map[int]string) []ChapterPlan {
 	if len(chronicle) == 0 {
 		return nil
 	}
+	// 有 LLM 配置则优先走 LLM 分章（按事件决策），失败/非法输出回退启发式
+	if w.APICfg != nil {
+		if plans := w.planChaptersLLM(ctx, chronicle, thinkings); len(plans) > 0 {
+			return plans
+		}
+	}
+	return w.planChaptersHeuristic(chronicle, thinkings)
+}
+
+// planChaptersHeuristic 启发式分章（回退方案）：每章至少包含 DaysPerCh 天且 ≥2 个"戏剧日"
+func (w *Writer) planChaptersHeuristic(chronicle []sim.ChronicleEntry, thinkings map[int]string) []ChapterPlan {
 	// 收集有记录的 day，排序
 	daySet := map[int]bool{}
 	for _, e := range chronicle {
@@ -146,6 +157,226 @@ func (w *Writer) PlanChapters(chronicle []sim.ChronicleEntry, thinkings map[int]
 	return plans
 }
 
+// chapterBreak JSON：LLM 输出的章节划分（每章一个连续天数区间，覆盖全部编年史）
+type chapterBreak struct {
+	Title    string `json:"title"`
+	DayStart int    `json:"day_start"`
+	DayEnd   int    `json:"day_end"`
+}
+
+// planChaptersLLM 由 LLM 按"事件序列"决策分章：给 LLM 看压缩后的逐日事件流，
+// 让它把"一个完整情节单元"合成一章，输出每章的天数区间与标题。返回空切片表示失败。
+func (w *Writer) planChaptersLLM(ctx context.Context, chronicle []sim.ChronicleEntry, thinkings map[int]string) []ChapterPlan {
+	ctx = llm.WithSpan(ctx, "LLM分章")
+	// 收集有记录的天，排序
+	daySet := map[int]bool{}
+	for _, e := range chronicle {
+		daySet[e.Day] = true
+	}
+	for d := range thinkings {
+		daySet[d] = true
+	}
+	var days []int
+	for d := range daySet {
+		days = append(days, d)
+	}
+	sort.Ints(days)
+	if len(days) == 0 {
+		return nil
+	}
+
+	// 把逐日事件压缩成"事件流"文本（平淡日标注，不占篇幅）
+	var sb strings.Builder
+	dayEvents := map[int][]string{}
+	for _, e := range chronicle {
+		t := strings.TrimSpace(e.Content)
+		if t == "" {
+			continue
+		}
+		// 只保留有叙事价值的事件/对话/观察，STATE 状态类跳过
+		if e.Kind == "STATE" {
+			continue
+		}
+		dayEvents[e.Day] = append(dayEvents[e.Day], t)
+	}
+	for _, d := range days {
+		es := dayEvents[d]
+		if th := strings.TrimSpace(thinkings[d]); th != "" {
+			es = append(es, "【主角内心】"+th)
+		}
+		if len(es) == 0 {
+			sb.WriteString(fmt.Sprintf("Day%d：（平淡日，时间流逝）\n", d))
+			continue
+		}
+		sb.WriteString(fmt.Sprintf("Day%d：%s\n", d, strings.Join(es, "；")))
+	}
+	eventFlow := sb.String()
+
+	system := `你是网文小说的"分章师"。你的任务不是写正文，而是拿到一段"逐日事件流"后，判断**哪些事件组成一个完整情节单元（一章）**，把事件流切成章节。
+分章原则：
+1. **按事件/情节分章，不是按天数分章**。一个完整的情节单元（起因→发展→冲突/转折→落点）应合成一章；新的章节应该从"新的事件、新的冲突、新的场景跳转、新的目标"开始。
+2. 平淡的过渡日（时间流逝）并入前后最近的情节章当背景，不要单独成章。
+3. 一章覆盖的天数区间必须连续，且所有章节的区间要**首尾相接、覆盖全部事件流**（不能漏天、不能重叠、不能留空）。
+4. 每章 1~6 个事件日为宜，最晚不超过 10 天；事件密集时一章 1~2 天，事件稀疏时一章可跨多天。
+5. 每章给一个 2~10 字的网文章节标题（要有悬念/冲突/画面感，禁止用"第几章""dayX"这类）。
+6. 全篇尽量 5~15 章（按事件量自然浮动，事件少就少切，事件多就多切）。
+输出严格 JSON，格式：
+{"chapters":[{"title":"章节标题","day_start":N,"day_end":M},...]}`
+	user := fmt.Sprintf("请把下面这段模拟事件流按情节单元分章。世界设定：\n%s\n\n事件流：\n%s\n\n请输出 chapters JSON。", w.worldContext(), eventFlow)
+
+	raw, err := llm.CallAPITierSync(ctx, w.APICfg, "fast", system, user)
+	if err != nil {
+		return nil
+	}
+	jsonStr := llm.ExtractJSON(raw)
+	if jsonStr == "" {
+		return nil
+	}
+	var out struct {
+		Chapters []chapterBreak `json:"chapters"`
+	}
+	if err := json.Unmarshal([]byte(jsonStr), &out); err != nil || len(out.Chapters) == 0 {
+		// 容错：偶尔 LLM 输出 {"title":..,"chapters":[...]} 多包一层
+		var alt struct {
+			Title    string         `json:"title"`
+			Chapters []chapterBreak `json:"chapters"`
+		}
+		if json.Unmarshal([]byte(jsonStr), &alt) != nil || len(alt.Chapters) == 0 {
+			return nil
+		}
+		out.Chapters = alt.Chapters
+	}
+	// 校验并规整：区间必须连续有序、覆盖全部天数；非法则回退启发式
+	plans := w.normalizeChapterBreaks(chronicle, days, out.Chapters)
+	return plans
+}
+
+// normalizeChapterBreaks 把 LLM 给出的章节天数区间规整为合法 ChapterPlan。
+// 核心：把每个区间的起点当作"新章节断点"，只在有记录的天上切分——
+// 保证章节首尾相接、覆盖全部天数、不引入无记录天；平淡日（无记录）自动并入相邻章。
+func (w *Writer) normalizeChapterBreaks(chronicle []sim.ChronicleEntry, days []int, breaks []chapterBreak) []ChapterPlan {
+	if len(breaks) == 0 {
+		return nil
+	}
+	start, end := days[0], days[len(days)-1]
+	// 按 DayStart 排序，逐段处理重叠：若某区间起点落在上一区间覆盖范围内（重叠），
+	// 则并入上一章（不产生新断点），仅向后扩展覆盖范围。
+	type seg struct {
+		ds, de int
+		title  string
+	}
+	var segs []seg
+	for _, b := range breaks {
+		ds := b.DayStart
+		if ds < start {
+			ds = start
+		}
+		if ds > end {
+			ds = end
+		}
+		de := b.DayEnd
+		if de < ds {
+			de = ds
+		}
+		if de > end {
+			de = end
+		}
+		segs = append(segs, seg{ds: ds, de: de, title: b.Title})
+	}
+	sort.Slice(segs, func(i, j int) bool { return segs[i].ds < segs[j].ds })
+
+	// 生成断点（dedupe 重叠），标题挂断点
+	titleByStart := map[int]string{}
+	var points []int
+	lastEnd := -1
+	for _, s := range segs {
+		// 断点必须落在有记录的天上
+		nd := nextRecordedDay(days, s.ds)
+		if nd < 0 {
+			continue
+		}
+		if lastEnd >= 0 && nd <= lastEnd {
+			// 重叠：并入上一章，只扩展覆盖范围
+			if s.de > lastEnd {
+				lastEnd = s.de
+			}
+			continue
+		}
+		if _, ok := titleByStart[nd]; !ok {
+			titleByStart[nd] = s.title
+			points = append(points, nd)
+		}
+		if s.de > lastEnd {
+			lastEnd = s.de
+		}
+	}
+	// 确保首章起点是 days[0]（若 LLM 没从第一天开始）
+	if _, ok := titleByStart[start]; !ok {
+		titleByStart[start] = ""
+		if len(points) == 0 || points[0] != start {
+			points = append([]int{start}, points...)
+		}
+	}
+	sort.Ints(points)
+
+	// 按断点切分：每章 = [断点, 下一断点) 的有记录天
+	var plans []ChapterPlan
+	num := 1
+	for i := 0; i < len(points); i++ {
+		segLo := points[i]
+		segHi := end + 1
+		if i+1 < len(points) && points[i+1] > segLo {
+			segHi = points[i+1]
+		}
+		chunk := daysInRange(days, segLo, segHi)
+		if len(chunk) == 0 {
+			continue
+		}
+		title := titleByStart[segLo]
+		if strings.TrimSpace(title) == "" {
+			title = w.pickChapterTitle(chronicle, chunk)
+		}
+		plans = append(plans, ChapterPlan{
+			Num: num, Title: title,
+			DayStart: chunk[0], DayEnd: chunk[len(chunk)-1],
+			Days: chunk, Status: "pending",
+		})
+		num++
+	}
+	return plans
+}
+
+// nextRecordedDay 返回 days 中第一个 >= lo 的天；无则返回 -1
+func nextRecordedDay(days []int, lo int) int {
+	for _, d := range days {
+		if d >= lo {
+			return d
+		}
+	}
+	return -1
+}
+
+// daysInRange 返回 days 中满足 lo <= d < hi 的天（保序）
+func daysInRange(days []int, lo, hi int) []int {
+	var out []int
+	for _, d := range days {
+		if d >= lo && d < hi {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// worldContext 世界设定摘要（供分章/叙事规划注入）
+func (w *Writer) worldContext() string {
+	if w.WB != nil {
+		if c := w.WB.ForNovelist(); c != "" {
+			return c
+		}
+	}
+	return "（无世界书）"
+}
+
 // pickChapterTitle 从该章天数范围内的事件条目选标题
 func (w *Writer) pickChapterTitle(chronicle []sim.ChronicleEntry, days []int) string {
 	daySet := map[int]bool{}
@@ -180,19 +411,97 @@ func (w *Writer) pickChapterTitle(chronicle []sim.ChronicleEntry, days []int) st
 	return fmt.Sprintf("第%d至%d天", days[0], days[len(days)-1])
 }
 
+// ---------- 叙事规划层（两段式管线第①段） ----------
+
+// NarrativePlan 叙事规划：把编年史素材翻译成"怎么讲"的章节剧本
+type NarrativePlan struct {
+	OpeningHook   string `json:"opening_hook"`   // 开场钩子：用什么场景/悬念开场
+	MiddleDevelop string `json:"middle_develop"` // 中段展开：哪些事件写足、哪些压缩
+	Climax        string `json:"climax"`         // 本章高潮/爽点：最该写足的那个时刻
+	ClosingHook   string `json:"closing_hook"`   // 收尾钩子：结尾留什么具体悬念
+	POVNote       string `json:"pov_note"`       // 视角决策：主角知道什么/不知道什么
+	PayoffType    string `json:"payoff_type"`    // 本章爽点类型（打脸/收获/装逼/情感/无）
+	Pacing        string `json:"pacing"`         // 节奏：fast(快节奏推进) / slow(蓄力铺垫) / mixed(张弛交替)
+	WordBudget    string `json:"word_budget"`    // 字数策略：哪些段写足哪些段省略
+}
+
+// planChapterNarrative 叙事规划层：拿编年史素材+世界书+前情，让 LLM 规划"这一章怎么讲"
+// 这是两段式管线的第①段——编年史是"发生了什么"，叙事规划决定"怎么讲"
+func (w *Writer) planChapterNarrative(ctx context.Context, p ChapterPlan, material string) string {
+	ctx = llm.WithSpan(ctx, "叙事规划")
+	if w.APICfg == nil {
+		return ""
+	}
+
+	worldCtx := ""
+	if w.WB != nil {
+		worldCtx = w.WB.ForNovelist()
+	}
+
+	system := `你是网文小说的"叙事规划师"。你的任务不是写正文，而是拿到模拟世界的编年史素材后，规划"这一章怎么讲"——把日志变成剧本大纲。
+输出严格 JSON，格式：
+{"opening_hook":"开场用什么场景/悬念砸脸（具体到画面和动作，禁止'氛围铺垫'开场）","middle_develop":"中段怎么展开：哪些事件写成完整场景（写足）、哪些事件压缩成一句过渡、事件之间怎么衔接","closing_hook":"结尾留什么具体悬念（具体到谁/什么/在哪，禁止'他感觉有大事要发生'）","pov_note":"视角决策：主角本章知道什么/不知道什么/他以为的真相和实际的差距","payoff_type":"本章爽点类型（打脸/收获/装逼/情感/无——如果本章不该给爽点就填'无'）","pacing":"节奏（fast=快节奏冲突推进/slow=蓄力铺垫/mixed=张弛交替）","word_budget":"字数策略：哪些段写足（高潮/冲突/爽点）、哪些段省略（过渡/背景）、预估本章该长该短"}
+规则：
+1. 素材是"原料"，你是"厨师"——决定怎么切、怎么炒、怎么摆盘。平淡的日子不用硬写，戏剧性的场景要放大。
+2. 开场必须直接进冲突/异常/悬念，禁止天气/环境开场。
+3. 收尾必须留具体钩子，让读者想看下一章。
+4. 视角严格限知：主角不知道的绝对不能写。
+5. 爽点要按节奏来——不是每章都要给爽点，憋着的章节要标注"蓄力"，释放的章节标注"爆发"。
+6. 如果素材里有打脸/收获/装逼/情感的机会，标注出来让写手写足。
+7. 只输出 JSON，不要其他文字。`
+
+	user := fmt.Sprintf("章节信息：第%d章（模拟第%d~%d天）\n\n世界设定：\n%s\n\n", p.Num, p.DayStart, p.DayEnd, worldCtx)
+	if w.PrevSummary != "" {
+		user += "前情提要：\n" + w.PrevSummary + "\n\n"
+	}
+	if w.Foreshadows != "" {
+		user += "未回收伏笔：\n" + w.Foreshadows + "\n\n"
+	}
+	user += "本章素材（编年史剪辑）：\n" + material + "\n\n请规划这一章怎么讲。"
+
+	raw, err := llm.CallAPITierSync(ctx, w.APICfg, "fast", system, user)
+	if err != nil {
+		return ""
+	}
+	jsonStr := llm.ExtractJSON(raw)
+	if jsonStr == "" {
+		return ""
+	}
+	var plan NarrativePlan
+	if err := json.Unmarshal([]byte(jsonStr), &plan); err != nil {
+		return ""
+	}
+	// 格式化成写手可读的叙事大纲
+	var sb strings.Builder
+	sb.WriteString("\n【叙事规划（本章剧本大纲，写手必须照此结构写）】\n")
+	sb.WriteString("开场钩子：" + plan.OpeningHook + "\n")
+	sb.WriteString("中段展开：" + plan.MiddleDevelop + "\n")
+	sb.WriteString("本章高潮：" + plan.Climax + "\n")
+	sb.WriteString("收尾钩子：" + plan.ClosingHook + "\n")
+	sb.WriteString("视角注意：" + plan.POVNote + "\n")
+	sb.WriteString("爽点类型：" + plan.PayoffType + "\n")
+	sb.WriteString("节奏定位：" + plan.Pacing + "\n")
+	sb.WriteString("字数策略：" + plan.WordBudget + "\n")
+	return sb.String()
+}
+
 // ---------- 章节写作 ----------
 
 // WriteChapter 生成一章小说正文（LLM），保存到 chapters/NNN_标题.md，返回正文
 func (w *Writer) WriteChapter(ctx context.Context, p ChapterPlan, chronicle []sim.ChronicleEntry, thinkings map[int]string, entities map[string]engine.Entity) (string, error) {
 	ctx = llm.WithSpan(ctx, "小说写手")
 	material := w.buildChapterMaterial(p, chronicle, thinkings)
-	// 小说化用设定：A1世界观 + B4伏笔清单 + C文风（世界书驱动，文风随题材走）
+	// 两段式管线第①段：叙事规划层——先规划"这一章怎么讲"，再让写手按大纲写
+	narrativePlan := w.planChapterNarrative(ctx, p, material)
+	// 小说化用设定：A1世界观 + B4伏笔清单 + C文风（世界书静态，利于前缀缓存）
 	worldCtx := ""
 	if w.WB != nil {
 		worldCtx = w.WB.ForNovelist()
-		if w.HeroName != "" {
-			worldCtx += "\n主角：" + w.HeroName + "（" + w.characterIntro(entities) + "）"
-		}
+	}
+	// 动态内容（角色现状随实体状态变化）单独放 user，保证 system 前缀字节级稳定 → 缓存命中
+	dynamicCtx := ""
+	if w.HeroName != "" {
+		dynamicCtx = "主角：" + w.HeroName + "（" + w.characterIntro(entities) + "）"
 	}
 
 	lengthRule := "2200~3200 字"
@@ -267,8 +576,8 @@ func (w *Writer) WriteChapter(ctx context.Context, p ChapterPlan, chronicle []si
 戏剧化改编权（你是导演，不是记录员）：
 · 素材是"原料"，不是"剧本"——你有权压缩、合并、强化、改编：平淡的日子一句带过或直接跳过，戏剧性场景（冲突/对峙/发现/升级）写足放大。
 · 主角主动性：素材里主角如果只是"被怪事找上门"，你要主动给他安排行动——他去查、他去问、他做选择，让读者看到他在推动故事。
-· 能力成长：按 A7 能力体系给本章的能力状态定位（Lv1 时间感知），素材里"掌心发热/声音共振"这类现象要写成能力在运作（感知到什么、有什么用、代价是什么），该升级的章节写出升级时刻。
-· 反派存在感：按 A8 反派行动线，每 2~3 章安排反派动一次（猎头挖角/秩序局上门/白昼跟踪），主角要有应对，压迫→对抗→打脸要有完整的爽点闭环。
+· 能力成长：按 A7 能力体系给本章的能力状态定位，素材里能力相关的现象要写成能力在运作（感知到什么、有什么用、代价是什么），该升级的章节写出升级时刻。
+· 反派存在感：按 A8 反派行动线，每 2~3 章安排反派动一次，主角要有应对，压迫→对抗→打脸要有完整的爽点闭环。
 · 强化爽点：发现关键线索、反杀、打脸、能力升级、关系突破——这些时刻宁可写足不要一笔带过（读者等的就是这些）。
 4. 输出纯小说文本：开头一行写"第N章·标题"（用章号），正文分段。禁止 JSON、禁止"本章完"之外的解说，禁止使用 markdown 标题符号。
 5. 正文结束后，**另起一行**写摘要块，格式严格为：【本章摘要】+100字左右的剧情概括（本章人物状态变化/关键事件/伏笔推进/留下的悬念，供下一章作者衔接，**不属于正文，不要写进故事里**）。
@@ -276,40 +585,35 @@ func (w *Writer) WriteChapter(ctx context.Context, p ChapterPlan, chronicle []si
    · 【场景素材】→ 完整场景，写足戏剧张力
    · 【背景素材】→ 章首一句过渡带过（"这段时间，日子照旧，但有些东西在变"），**严禁展开成完整场景**
    · 没有任何事发生的时段 → **直接跳过**，不要为凑字数写流水账
-   · 宁可章节稍短，也不要注水；平淡章写短，高潮章写足`
+   · 宁可章节稍短，也不要注水；平淡章写短，高潮章写足` + sim.WritingCraftSkills()
 
-	// 跨章记忆注入：前情提要（防遗忘）+ 未回收伏笔（防断头）
+	// 动态内容全部放进 user 消息（system 保持静态 → DeepSeek 前缀缓存命中，降本）
+	var ub strings.Builder
+	if dynamicCtx != "" {
+		ub.WriteString("【世界设定与角色现状（作为写作依据，沿用其身份与状态）】\n" + dynamicCtx + "\n\n")
+	}
+	if narrativePlan != "" {
+		ub.WriteString(narrativePlan + "\n\n")
+	}
 	if w.PrevSummary != "" {
-		system += `
-
-【前情提要（前面章节已发生的事，保持连贯：别重复写、别写漏、人物关系与状态沿用）】
-` + w.PrevSummary
+		ub.WriteString("\n【前情提要（前面章节已发生的事，保持连贯：别重复写、别写漏、人物关系与状态沿用）】\n" + w.PrevSummary + "\n")
 	}
 	if w.Foreshadows != "" {
-		system += `
-
-【未回收伏笔（前文埋下的钩子，本章自然推进或回收，别忘掉）】
-` + w.Foreshadows
+		ub.WriteString("\n【未回收伏笔（前文埋下的钩子，本章自然推进或回收，别忘掉）】\n" + w.Foreshadows + "\n")
 	}
-	// 岔口决策注入：本章已定方向（用户改选优先，否则 AI 代决）——写手必须照此方向推进
 	if w.Decisions != "" {
-		system += `
-
-【本章剧情方向（已定，写手必须严格执行：主角按"采用方向"行动，不得另起炉灶或跳过）】
-` + w.Decisions
+		ub.WriteString("\n【本章剧情方向（已定，写手必须严格执行：主角按“采用方向”行动，不得另起炉灶或跳过）】\n" + w.Decisions + "\n")
 	}
-
-	// 素材库注入：抽真实网文段落当"形态示范"（学段落长短/对话节奏/动作推进，禁止抄袭）
 	if w.Material != nil {
 		if ref := w.Material.PickFor(material, 3, 8); ref != "" {
-			system += "\n\n" + ref
+			ub.WriteString("\n【段落形态示范（学节奏/对话/动作推进，禁止抄袭）】\n" + ref + "\n")
 		}
 	}
+	ub.WriteString(strings.TrimSpace(material))
+	ub.WriteString("\n\n【最后指令】现在直接写第" + fmt.Sprintf("%d", p.Num) + "章正文。第一行写'第" + fmt.Sprintf("%d", p.Num) + "章·标题'——标题必须是你起的网文章节名（要有悬念/冲突/画面感，2~8个字，禁止用素材条目名如'街坊议论：xx'）。然后写正文，正文结束另起一行写【本章摘要】。")
+	user := ub.String()
 
-	// user 末尾强制指令：直接写正文（思考走模型自带 reasoning 通道，自动另存）
-	material = strings.TrimSpace(material) + "\n\n【最后指令】现在直接写第" + fmt.Sprintf("%d", p.Num) + "章正文。第一行写'第" + fmt.Sprintf("%d", p.Num) + "章·标题'——标题必须是你起的网文章节名（要有悬念/冲突/画面感，2~8个字，禁止用素材条目名如'街坊议论：xx'）。然后写正文，正文结束另起一行写【本章摘要】。"
-
-	res, err := llm.CallAPITierSyncResult(ctx, &cfg, "premium", system, material)
+	res, err := llm.CallAPITierSyncResult(ctx, &cfg, "premium", system, user)
 	if err != nil {
 		return "", fmt.Errorf("章节生成失败: %w", err)
 	}

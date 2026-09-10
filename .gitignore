@@ -5,9 +5,15 @@ api.json
 .env
 credentials*
 
+# ===== 调试探针文件（含密钥，禁止提交）=====
+internal/**/_goprobe*.go
+**/_probe*
+**_probe*
+
 # ===== 运行时数据（个人世界数据，不入库）=====
 worlds/
 storys/
+wsdata/
 run.log
 *.log
 
@@ -18,6 +24,12 @@ worldsim_plugin.zip
 *.exe
 *.out
 *.test
+
+# ===== 本地编译二进制（不入库，Docker 从源码构建）=====
+worldsim_bin
+worldsim-linux
+worldsim_linux
+worldsim_windows*
 
 # ===== Go =====
 /dist/
@@ -37,3 +49,10 @@ __pycache__/
 # ===== 插件包分发（单独分发，不入源码库）=====
 /plugins/
 /tmp/
+
+# ===== 前端构建 =====
+node_modules/
+frontend/dist/
+frontend/node_modules/
+worldweb/node_modules/
+worldweb/dist/

@@ -154,7 +154,8 @@ func (s *Simulator) skipSummaryLLM(ctx context.Context, plan *ProtagonistPlan, s
 3. interrupt=true 仅在"命中中断条件"时（主角遇到策略外的大事/危险），命中则 summary 只写到中断前
 4. 主角默认策略：` + string(planJSON)
 	user := fmt.Sprintf("世界状态：\n%s\n请生成 Day%d-%d 的快进摘要。", stateJSON, startDay, endDay)
-	raw, err := s.llm.Complete(ctx, system, user)
+	// 快进摘要用 fast 档位（world/event 等天级调用统一 fast，避免拖慢）
+	raw, err := s.llm.CompleteTier(ctx, "fast", system, user)
 	if err != nil {
 		return "", nil, false
 	}
