@@ -26,7 +26,7 @@ WorldSim 是"多Agent世界模拟器 → 网文生产引擎"：模拟一个世�
 
 - **题材自适应**：任何世界同一套引擎。修仙=测灵根/丹炉/宗门，末世=搜寻/尸潮/营地，别拿别的题材模板套
 - **决策翻案**：用户明确说"选B"就 `world_decision_resolve`，后续按用户方向写
-- **文字游戏模式（Play Mode）**：同一世界可"直接玩"——HTTP API（`/api/game/start|action|wait|status`，`GET /game` 终端风游戏页）、统一外壳「文字游戏」页（48092），或 MCP 工具（`world_game_start/play/wait/status`）。**数值与掷骰在代码层**（`game.json`：d20+属性修正 vs 裁判申报的 DC），LLM 只做裁判与第二人称叙事，不许在叙述里改数值；默认属性表=世界书 `## 游玩属性` 段（数据层）→ LLM 现场生成 → 通用兜底，属性名不硬编码
+- **文字游戏模式（Play Mode）**：同一世界可"直接玩"——HTTP API（`/api/game/start|action|wait|status`，`GET /game` 终端风游戏页）、统一外壳「文字游戏」页（48092），或 MCP 工具（`world_game_start/play/wait/status`）。**数值与掷骰在代码层**（`game.json`：d20+属性修正 vs 裁判申报的 DC），LLM 只做裁判与第二人称叙事，不许在叙述里改数值；默认属性表=世界书 `## 游玩属性` 段（数据层）→ LLM 现场生成 → 通用兜底，属性名不硬编码；**像素套件自动换装**：`docs/art/pixel/<theme>/`（修仙/末世/西幻/克苏鲁/星际各 63 资产）由 `GET /pixel-art/{theme}/{file}.png` 直出，`/api/game/status` 返回 theme 与 sprite 列表（detectPixelTheme 三层猜题材）
 - **就绪度不是天数**：看 `world_readiness`，别等"跑满N天"
 - **LLM 超时容忍**：中转站慢时单日失败会 dry-run 兜底，循环自愈重试；长时间不动用 `world_rewind` 回退
 - **安全**：`api.json` 含真实密钥，**永不提交**（.gitignore 已排除）；`worlds/` `material/` 不入库

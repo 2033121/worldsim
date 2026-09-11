@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -241,6 +242,17 @@ func (ws *worldServer) handleGameStatus(w http.ResponseWriter, r *http.Request) 
 	}
 	g := inst.lazyGame().StateCurrent()
 	resp := map[string]any{"ok": true, "game": g}
+	if theme := detectPixelTheme(inst); theme != "" {
+		resp["theme"] = theme
+		sp := map[string]string{"hero": "/pixel-art/" + theme + "/character-1.png",
+			"monster": "/pixel-art/" + theme + "/monster-1.png"}
+		resp["pixel"] = map[string]any{"theme": theme, "hero": sp["hero"],
+			"monster":    sp["monster"],
+			"characters": spriteListPath(theme, "character", 12),
+			"monsters":   spriteListPath(theme, "monster", 8),
+			"scenes":     spriteListPath(theme, "scene", 3),
+		}
+	}
 	if inst.engine != nil {
 		hero := inst.heroName
 		if inst.sim != nil && inst.sim.HeroName() != "" {
@@ -335,4 +347,81 @@ func (ws *worldServer) handleGamePage(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write(data)
+}
+
+// detectPixelTheme 从世界书标题/文件名推断像素套件主题（修仙/末世/西幻/克苏鲁/星际）
+func detectPixelTheme(inst *worldInstance) string {
+	if inst == nil || inst.wb == nil {
+		return ""
+	}
+	text := inst.wb.Title + " " + inst.name
+	if raw := strings.ToLower(strings.TrimSpace(inst.wb.Raw[:min(len(inst.wb.Raw), 600)])); raw != "" {
+		text += " " + raw // 主题包世界书没有 A1 标题段，从头部原文猜题材
+	}
+	lower := strings.ToLower(text)
+	switch {
+	case strings.Contains(lower, "修仙") || strings.Contains(lower, "仙") || strings.Contains(lower, "xianxia") || strings.Contains(lower, "cultivation"):
+		return "xianxia"
+	case strings.Contains(lower, "末世") || strings.Contains(lower, "废土") || strings.Contains(lower, "apocalypse") || strings.Contains(lower, "wasteland"):
+		return "apocalypse"
+	case strings.Contains(lower, "西幻") || strings.Contains(lower, "骑士") || strings.Contains(lower, "奇幻") || strings.Contains(lower, "fantasy") || strings.Contains(lower, "knight"):
+		return "western"
+	case strings.Contains(lower, "克苏鲁") || strings.Contains(lower, "异界") || strings.Contains(lower, "cosmic") || strings.Contains(lower, "cthulhu"):
+		return "cosmic"
+	case strings.Contains(lower, "星际") || strings.Contains(lower, "科幻") || strings.Contains(lower, "interstellar") || strings.Contains(lower, "star"):
+		return "interstellar"
+	}
+	return ""
+}
+
+// spriteListPath 列出套件里某类 sprite 的 URL（存在与否由前端按 404 处理也行，这里给出理论列表）
+func spriteListPath(theme, label string, n int) []string {
+	urls := []string{}
+	for i := 1; i <= n; i++ {
+		urls = append(urls, fmt.Sprintf("/pixel-art/%s/%s-%d.png", theme, label, i))
+	}
+	return urls
+}
+
+// pixelArtPath 解析磁盘上的套件文件（顺序尝试 wsdata/art 先、docs/art 兜底）
+func pixelArtPath(progDirs []string, theme, name string) string {
+	for _, base := range progDirs {
+		for _, sub := range []string{"art/pixel", "docs/art/pixel"} {
+			p := filepath.Join(base, sub, theme, name)
+			if _, err := os.Stat(p); err == nil {
+				return p
+			}
+		}
+	}
+	return ""
+}
+
+// GET /pixel-art/{theme}/{file} —— 像素套件资产直出（磁盘文件，按需 fallback 到 docs/）
+func (ws *worldServer) handlePixelArt(w http.ResponseWriter, r *http.Request) {
+	theme := r.PathValue("theme")
+	file := r.PathValue("file")
+	if theme == "" || file == "" || !strings.HasSuffix(file, ".png") || strings.Contains(file, "/") {
+		http.NotFound(w, r)
+		return
+	}
+	// 资产解析顺序：程序目录(wsdata)/art/pixel → 程序目录 docs/art/pixel（开发态=仓库根）
+	progRoot := filepath.Dir(ws.baseDir)
+	candidates := []string{}
+	for _, base := range []string{progRoot, filepath.Join(progRoot, "docs")} {
+		for _, sub := range []string{"art/pixel", ""} {
+			candidates = append(candidates,
+				filepath.Join(base, sub, theme, file),
+				filepath.Join(base, sub, theme, "sprites", file),
+			)
+		}
+	}
+	for _, p := range candidates {
+		if data, err := os.ReadFile(p); err == nil {
+			w.Header().Set("Content-Type", "image/png")
+			w.Header().Set("Cache-Control", "public, max-age=3600")
+			_, _ = w.Write(data)
+			return
+		}
+	}
+	http.NotFound(w, r)
 }

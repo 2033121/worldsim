@@ -21,6 +21,15 @@
 - `go test ./internal/game/...` 全绿（6/6）
 - 端到端冒烟：建世界 → init → start → action → wait → `world_state.json` 中 `stats.game`/`health`/`money` 同步落盘全数通过（断言式冒烟脚本）
 
+## [1.7.0] - 2026-08-05
+
+### ✨ 新增（像素套件 + 游玩页接线）
+- **五大主题像素套件**（25 张 sheet → 315 个透明 sprite 小图）：每主题 characters(4x3=12) / monsters(4x2=8, 题材自拟) / scenes(晨暮夜三联=3) / maptiles(4x4=16 整格 tile) / items(6x4=24)——凑齐人物/怪物/背景/地图/物品全套；目录 `docs/art/pixel/<主题>/`
+- **manifest 驱动通用裁剪器** `scripts/crop_grid.py`：按资产类型声明网格规格（cols×rows+是否抠底），自动象限切分→紧致 bbox→边洪泛抠底→逐图导出+contact-sheet；全量量化（palette 255 色）后总积 108MB→22MB，观感无损
+- **游玩页自动换装**：`detectPixelTheme`（世界书标题/文件名/头部原文三层题材推断）→ `/api/game/status` 返回 theme + hero/monster/characters/monsters/scenes URL 组；`GET /pixel-art/{theme}/{file}.png` 磁盘直出（wsdata/art 先、docs/art 兜底）
+- **前端接线**：`wsweb/game.html`（内置终端页，主角 sprite 常显 + 检定失败时主角换怪物像强调代价）与 worldapp `GamePage.svelte`（hero 图 + 主题标签，失败切换怪物 sprite）
+- 生成/裁剪脚本链：`gen_pixel_suite.py`（5×5 sheet，中转站 UA+curl 兜底）→ `crop_grid.py`；端到端冒烟（主题识别 xianxia/chars 12/资产 200）通过
+
 ## [1.6.4] - 2026-08-05
 
 ### ✨ 新增

@@ -237,6 +237,7 @@ func startWorldServer(worldDir string, apiCfg *config.APIConfig, ra *research.Ag
 	mux.HandleFunc("POST /api/game/stop", ws.handleGameStop)
 	mux.HandleFunc("GET /api/game/log", ws.handleGameLog)
 	mux.HandleFunc("GET /game", ws.handleGamePage)
+	mux.HandleFunc("GET /pixel-art/{theme}/{file}", ws.handlePixelArt)
 
 	// 世界参考资料附件：上传 / 列表 / 删除
 	mux.HandleFunc("POST /api/world/attach/upload", ws.handleAttachUpload)

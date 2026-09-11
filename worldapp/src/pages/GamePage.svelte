@@ -10,12 +10,15 @@
   let mode = 'do';
   let turns = [];
   let started = false;
+  let heroSrc = '';
+  let pixel = null;
 
   async function load() {
     try {
       const r = await gameApi('/api/game/status');
       if (r && r.game) {
         state = r.game;
+        pixel = r.pixel || null;
         turns = (state.log || []).map((e) => ({
           who: e.mode === 'start' ? '开场' : `你(${e.mode})`,
           text: e.mode === 'start' ? e.narration : e.input,
@@ -45,6 +48,7 @@
         state = r.state;
         const last = (state.log || []).slice(-1)[0];
         turns = [...turns, { who: '世界', text: r.narration, reply: '', check: last && last.check }];
+        if (last && last.check && !last.check.success && pixel && pixel.monster) heroSrc = pixel.monster;
       } else {
         turns = [...turns, { who: '系统', text: r.error || '未知错误', reply: '', check: null }];
       }
@@ -125,6 +129,14 @@
       <div class="flex flex-wrap gap-2 mt-2 text-xs text-base-content/60">
         📍 {state.location || '—'} ｜ 🎯 {state.quest || '—'} ｜ 🎒 {(state.inventory || []).length ? state.inventory.join('、') : '（空）'}
       </div>
+
+      <!-- 像素主角/怪物（按世界主题自动加载） -->
+      {#if heroSrc}
+        <div class="mt-3 flex items-end gap-3">
+          <img src={heroSrc} alt="主角" style="height:96px;image-rendering:pixelated" onerror={() => (heroSrc = '')} />
+          {#if pixel && pixel.theme}<span class="text-xs opacity-50">像素套件主题：{pixel.theme}</span>{/if}
+        </div>
+      {/if}
 
       <!-- 账本 -->
       <div class="mt-4 space-y-3 max-h-[46vh] overflow-y-auto pr-1">

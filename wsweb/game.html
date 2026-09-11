@@ -57,6 +57,7 @@ footer{padding:12px 16px;background:var(--panel);border-top:1px solid #30363d;ma
   <span class="chip">🎯 <b id="quest">—</b></span>
   <span class="chip">🎒 <b id="inv">—</b></span>
 </div>
+<div style="padding:0 16px 6px;max-width:932px;margin:0 auto;display:flex;align-items:flex-end;gap:10px"><img id="heroSprite" src="" style="height:64px;image-rendering:pixelated;display:none" alt=""><div id="attrs"
 <div id="attrs" style="padding:0 16px 6px;max-width:932px;margin:0 auto;font-size:12px;color:var(--dim);max-height:60px;overflow-y:auto"></div>
 <main id="log"></main>
 <footer>
@@ -97,7 +98,8 @@ function addTurn(t){
   const div=document.createElement('div');div.className='turn'+(t.you?' you':'');
   div.innerHTML=`<div class="who">${t.who}</div><div class="narration">${t.text.replace(/</g,'&lt;')}</div>`;
   if(t.check){const c=t.check,ok=c.success;
-    div.insertAdjacentHTML('beforeend',`<div class="dice ${ok?'ok':'fail'}">🎲 检定[${c.ability}]: d20=${c.roll}${(c.mod>=0?'+':'')+c.mod} vs 难度${c.dc} → ${ok?'成功':'失败'}</div>`);}
+    div.insertAdjacentHTML('beforeend',`<div class="dice ${ok?'ok':'fail'}">🎲 检定[${c.ability}]: d20=${c.roll}${(c.mod>=0?'+':'')+c.mod} vs 难度${c.dc} → ${ok?'成功':'失败'}</div>`);
+    if(!ok)applyMonsterOnFail();}
   main.appendChild(div);main.scrollTop=main.scrollHeight;
 }
 function pushYou(txt,m){addTurn({you:1,who:`你 (${mName(m)}) →`,text:txt});}
@@ -106,6 +108,7 @@ const mName=m=>({do:'行动',say:'说话',story:'叙事'})[m]||'行动';
 
 async function refresh(){try{const r=await(api('/api/game/status').then(x=>x.json()));
   if(r.error||!r.game)return;
+  applyPixelArt(r);
   document.getElementById('worldChip').textContent='世界：'+(r.day!=null?'':'' ); 
   renderState(r.game);
   if(!r.game.log)return;
@@ -141,6 +144,14 @@ async function startGame(){
 }
 document.getElementById('btnStart').onclick=startGame;
 document.getElementById('btnStop').onclick=()=>api('/api/game/stop',{method:'POST'}).then(()=>location.reload());
+function applyPixelArt(r){
+  const px=r.pixel||{};const hero=document.getElementById('heroSprite');
+  if(px.hero&&hero){hero.src=px.hero;hero.style.display='block';hero.onerror=()=>{hero.style.display='none'};}
+  window.__pixel=px;}
+function applyMonsterOnFail(){
+  const px=window.__pixel||{};const img=document.getElementById('heroSprite');
+  if(px.monster&&img){img.src=px.monster;img.style.display='block';img.onerror=()=>{img.style.display='none'};}
+}
 function setBusy(on){document.getElementById('busy').style.display=on?'block':'none';
   document.getElementById('btnSend').disabled=on;}
 const modal=(show,msg)=>{const m=document.getElementById('modal');if(!show){m.classList.add('hidden');return}

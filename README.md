@@ -173,7 +173,13 @@ _均由 gpt-image-2 按本仓库主题生成（水墨卷轴风，图内零文字
 
 ![](docs/art/pixel-sprites/contact-sheet.png)
 
-_五组各四人：多智能体 crew（总导演/写手/守灯/掷骰者）、修仙师（剑修/符箓/丹师/药灵）、末世幸存者队（搜刮者/弩卫/军医/电报员）、西幻酒馆队（骑士/法师/吟游/机械师）、星际远航队（舰长/机甲/星灵植物学家/等离子焊工）。sheet 源图与裁剪脚本：`docs/art/pixel-sheets/`、`scripts/gen_pixel_sheets.py` + `crop_pixel_sheets.py`（2x2 → 四独立 PNG，洪泛抠底转透明）。_
+### 像素套件（五大主题 × 63 资产：人物 12 / 怪物 8 / 三时段场景 / 16 map tile / 24 物品）
+
+| 经典修仙 | 末世废土 | 西幻奇幻 | 克苏鲁异界 | 星际科幻 |
+|---|---|---|---|---|
+| ![](docs/art/pixel/xianxia/sprites/contact-sheet.png) | ![](docs/art/pixel/apocalypse/sprites/contact-sheet.png) | ![](docs/art/pixel/western/sprites/contact-sheet.png) | ![](docs/art/pixel/cosmic/sprites/contact-sheet.png) | ![](docs/art/pixel/interstellar/sprites/contact-sheet.png) |
+
+**游玩页已自动接线**：`/api/game/status` 依据世界书题材返回 `theme` + 主题匹配的 sprite 列表，游玩页按世界主题自动换装（人物立绘/检定失败出怪物图），资产经 `GET /pixel-art/{theme}/{file}.png` 直出（磁盘 `docs/art/pixel/` 优先，量化压缩后全库仅 ~22MB）。sheet 生成 `scripts/gen_pixel_suite.py` + manifest 裁剪 `scripts/crop_grid.py`（4x3 人物 / 4x2 怪物 / 三联场景 / 4x4 tile 整格 / 6x4 物品）。
 
 
 ## 📥 下载
