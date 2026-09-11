@@ -21,6 +21,13 @@
 - `go test ./internal/game/...` 全绿（6/6）
 - 端到端冒烟：建世界 → init → start → action → wait → `world_state.json` 中 `stats.game`/`health`/`money` 同步落盘全数通过（断言式冒烟脚本）
 
+## [1.6.3] - 2026-08-05
+
+### ✨ 新增
+- **包装图二批（7 张，gpt-image-2）**：5 张主题包竖版封面（修仙/末世/西幻/克苏鲁/星际，2:3 竖版+顶部标题留白）、`mcp-hub`（isometric 深蓝风：聊天/代码/移动三客户端到中央水墨世界再到工具卡输送带）、`rewind`（朱砂锚点分叉三重世界的快照回退概念图）
+  - 生成脚本 `scripts/gen_art_extra.py`（延续 cookbook 结构化提示词与全图零文字纪律）
+  - README 中文「包装图」区扩展；英文 README MCP 段加 `mcp-hub` 横幅
+
 ## [1.6.2] - 2026-08-05
 
 ### ✨ 新增

@@ -153,7 +153,21 @@ WorldSim 提供标准 MCP Server（`worldsim-mcp/server.py`，零依赖），可
 |---|---|---|
 | ![](docs/art/play-mode.png) | ![](docs/art/themes-triptych.png) | ![](docs/art/agent-mandala.png) |
 
-_均由 gpt-image-2 按本仓库主题生成（水墨卷轴风）；生成脚本见 `scripts/gen_art.py`。_
+**MCP + AI 客户端接入**（Codex/Trae/Claude 通过 30 个 `world_*` 工具直接驱动）：
+
+![](docs/art/mcp-hub.png)
+
+**时间回退**（快照制锚点，剧情跑偏随时重演分支）：
+
+![](docs/art/rewind.png)
+
+### 主题包封面（15 个主题包中的代表 5 款）
+
+| 经典修仙 | 末世废土 | 西幻奇幻 | 克苏鲁异界 | 星际科幻 |
+|---|---|---|---|---|
+| ![](docs/art/theme-xianxia.png) | ![](docs/art/theme-apocalypse.png) | ![](docs/art/theme-western-fantasy.png) | ![](docs/art/theme-cosmic-horror.png) | ![](docs/art/theme-interstellar.png) |
+
+_均由 gpt-image-2 按本仓库主题生成（水墨卷轴风，图内零文字零水印）；生成脚本见 `scripts/gen_art.py` 与 `scripts/gen_art_extra.py`。_
 
 ## 📥 下载
 

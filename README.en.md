@@ -57,6 +57,8 @@ and proxies `/api/novel/*`→:48090, `/api/*` & `/game`→:48091.
 
 ## MCP for AI agents
 
+![](docs/art/mcp-hub.png)
+
 `worldsim-mcp/server.py` is a zero-dependency MCP stdio server (26 tools, incl.
 `world_loop_start`, `world_rewind`, `world_readiness`, `world_novel_generate`,
 `world_seed_novel`) for Codex CLI / Trae / Claude / Cursor. Setup guides:
