@@ -67,6 +67,8 @@ documents collaboration conventions.
 
 [Play Mode banner](docs/art/play-mode.png) — a jade d20 on a lantern-lit journal; the text-game face of the same engine.
 
+Also ships a 20-character transparent pixel-sprite pack (agents / xianxia / apocalypse / western / sci-fi crews) under [`docs/art/pixel-sprites/`](docs/art/pixel-sprites/contact-sheet.png).
+
 ## Downloads
 
 Prebuilt binaries for Linux (amd64/arm64), Windows, macOS (amd64/arm64), the

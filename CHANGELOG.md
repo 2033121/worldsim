@@ -21,6 +21,12 @@
 - `go test ./internal/game/...` 全绿（6/6）
 - 端到端冒烟：建世界 → init → start → action → wait → `world_state.json` 中 `stats.game`/`health`/`money` 同步落盘全数通过（断言式冒烟脚本）
 
+## [1.6.4] - 2026-08-05
+
+### ✨ 新增
+- **像素角色包（20 人，透明 PNG）**：5 张 2x2 sprite sheet（多智能体 crew / 修仙师 / 末世幸存者 / 西幻酒馆 / 星际远航）→ 按象限紧致裁剪 + 从边洪泛抠底转透明 → `docs/art/pixel-sprites/` 20 张独立 sprite + contact-sheet 合集；README 中英接入
+  - 生成 `scripts/gen_pixel_sheets.py`（统一 16-bit 风/正面站姿/共同底色保证可裁剪）；裁剪+抠底 `scripts/crop_pixel_sheets.py`（坑修复：PIL 对 RGB 图赋 alpha 四元组静默无效，必须先转 RGBA）
+
 ## [1.6.3] - 2026-08-05
 
 ### ✨ 新增

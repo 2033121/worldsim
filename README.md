@@ -169,6 +169,13 @@ WorldSim 提供标准 MCP Server（`worldsim-mcp/server.py`，零依赖），可
 
 _均由 gpt-image-2 按本仓库主题生成（水墨卷轴风，图内零文字零水印）；生成脚本见 `scripts/gen_art.py` 与 `scripts/gen_art_extra.py`。_
 
+### 像素角色包（20 人，透明底可直接当素材用）
+
+![](docs/art/pixel-sprites/contact-sheet.png)
+
+_五组各四人：多智能体 crew（总导演/写手/守灯/掷骰者）、修仙师（剑修/符箓/丹师/药灵）、末世幸存者队（搜刮者/弩卫/军医/电报员）、西幻酒馆队（骑士/法师/吟游/机械师）、星际远航队（舰长/机甲/星灵植物学家/等离子焊工）。sheet 源图与裁剪脚本：`docs/art/pixel-sheets/`、`scripts/gen_pixel_sheets.py` + `crop_pixel_sheets.py`（2x2 → 四独立 PNG，洪泛抠底转透明）。_
+
+
 ## 📥 下载
 
 多平台二进制 + 插件包 + MCP Server 全部见 [Releases](https://github.com/2033121/worldsim/releases)（最新 **v1.4.0**）：
