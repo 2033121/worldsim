@@ -3,11 +3,13 @@
 # WorldSim — Multi-Agent World Simulator → Web-Novel Production Engine
 
 > Let AI simulate "a world that actually runs", then automatically rewrite its
+
 > chronicles into fiction that doesn't read like AI wrote it. Go single binary +
 > WebUI, zero external dependencies. Deeply adapted from
 > [Nigh/show-me-the-story](https://github.com/Nigh/show-me-the-story).
 > A condensed English guide is kept here; the [Chinese README](README.md) is the
 > authoritative full reference.
+<p align="center"><img src="docs/art/hero-banner.png" width="100%" alt="WorldSim: a simulated world flowing into a novel scroll"/></p>
 
 ## What makes it different
 
@@ -60,6 +62,8 @@ and proxies `/api/novel/*`→:48090, `/api/*` & `/game`→:48091.
 `world_seed_novel`) for Codex CLI / Trae / Claude / Cursor. Setup guides:
 `worldsim-mcp/codex.md` and `worldsim-mcp/trae.md`; the repo-root `AGENTS.md`
 documents collaboration conventions.
+
+[Play Mode banner](docs/art/play-mode.png) — a jade d20 on a lantern-lit journal; the text-game face of the same engine.
 
 ## Downloads
 

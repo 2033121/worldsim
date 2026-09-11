@@ -10,7 +10,9 @@
 [![Stars](https://img.shields.io/github/stars/2033121/worldsim)](https://github.com/2033121/worldsim/stargazers)
 
 > 让 AI 模拟"一个世界真实地运转"，再把世界编年史自动改写成人味十足的小说。
+
 > 基于 [Nigh/show-me-the-story](https://github.com/Nigh/show-me-the-story) 深度改造（Go 单二进制 + WebUI，零外部依赖）。
+<p align="center"><img src="docs/art/hero-banner.png" alt="WorldSim：世界在卷轴上演化，墨迹自动流成小说" width="100%"></p>
 
 ## ✨ 特性
 
@@ -144,6 +146,14 @@ WorldSim 提供标准 MCP Server（`worldsim-mcp/server.py`，零依赖），可
 - Codex：`worldsim-mcp/codex.md`（config.toml / .mcp.json / codex mcp add）
 - Trae：`worldsim-mcp/trae.md`（MCP 面板 stdio 添加）
 - 仓库根 `AGENTS.md` 是 Codex 的协作指南
+
+## 🎨 包装图
+
+| 游玩模式 Play Mode | 一个引擎，任意题材 | 多智能体徽章 |
+|---|---|---|
+| ![](docs/art/play-mode.png) | ![](docs/art/themes-triptych.png) | ![](docs/art/agent-mandala.png) |
+
+_均由 gpt-image-2 按本仓库主题生成（水墨卷轴风）；生成脚本见 `scripts/gen_art.py`。_
 
 ## 📥 下载
 
