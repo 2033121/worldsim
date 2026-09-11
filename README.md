@@ -1,3 +1,5 @@
+[English](README.en.md) | 中文
+
 # WorldSim · 多Agent世界模拟器 → 网文生产引擎
 
 [![CI](https://github.com/2033121/worldsim/actions/workflows/ci.yml/badge.svg)](https://github.com/2033121/worldsim/actions/workflows/ci.yml)

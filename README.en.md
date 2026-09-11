@@ -1,0 +1,73 @@
+[中文](README.md) | English
+
+# WorldSim — Multi-Agent World Simulator → Web-Novel Production Engine
+
+> Let AI simulate "a world that actually runs", then automatically rewrite its
+> chronicles into fiction that doesn't read like AI wrote it. Go single binary +
+> WebUI, zero external dependencies. Deeply adapted from
+> [Nigh/show-me-the-story](https://github.com/Nigh/show-me-the-story).
+> A condensed English guide is kept here; the [Chinese README](README.md) is the
+> authoritative full reference.
+
+## What makes it different
+
+- **Readiness-driven, not day-driven** — the simulation ends when there is *enough material to write from* (chapter seeds ≥3 + dramatic beats ≥12 + ≥1 foreshadow paid off + tension ≥0.4), not after "N days". Cultivation settings skip years; apocalypse settings move day by day; the LLM infers the time scale from the worldbook.
+- **Debate-to-novel pipeline** — a GM agent adjudicates against the worldbook, an event agent generates beats from the B5 event spectrum, the protagonist answers three value/ability/world-line questions, NPCs run Init→Act→React chains, and a foreshadow ledger tracks planting→ripening→payoff.
+- **De-AI-flavored prose** — 886+ excerpts from real published web novels (source-titled) plus six writing methodology layers injected as prompts (memory pins, conflict hooks, sensory specificity, POV discipline, banned高频词).
+- **Forgiving runtime** — event-sourced state engine with snapshot rewind to any anchor; an embedded self-healing module monitors LLM availability, service liveness, data integrity and loop stalls, and repairs automatically (snapshot rollback, dry-run fallback, loop interruption to stop token burn).
+- **World → novel, zero LLM calls** — seed a novel outline and character sheets directly from the simulated world's worldbook / factions / recent events (`world_seed_novel`).
+- **Built-in web search** — Tavily (switchable to SearXNG / Bing) for genre research and "search for reference material" while writing.
+
+## 15 themes, one engine
+
+15 theme packs (xianxia / apocalypse / western fantasy / cosmic horror / urban / interstellar / historical …) plus a universal worldbook template. `world_create(theme, desc)` → LLM generates the world book → protagonist, NPCs, locations → background loop → readiness check → novel. Xianxia worlds don't get apocalypse templates: the same engine adapts, not the templates.
+
+## Quick start
+
+```bash
+go build -o worldsim .        # single ~10MB binary, zero deps
+./worldsim /path/to/data-dir  # unified entry http://localhost:48092
+```
+
+Configure `api.json` (in the binary's directory — see Chinese README for the full schema including `model_tiers` fast/normal/premium). Then drive everything by API:
+
+```bash
+curl -X POST localhost:48091/api/worlds/create -H 'Content-Type: application/json' \
+  -d '{"name":"Qinglan","theme":"经典修仙","desc":"a village boy finds a broken sword blank"}'
+curl -X POST localhost:48091/api/world/init
+curl -X POST localhost:48091/api/world/loop -H 'Content-Type: application/json' -d '{"action":"start","days":1000}'
+curl localhost:48091/api/world/readiness          # ends early when ready
+curl -X POST localhost:48091/api/world/novel/generate
+curl localhost:48091/api/world/novel/chapter/1
+```
+
+Or open `http://localhost:48092` — the unified front end (browser-style shell:
+tabs / address bar / Ctrl+K palette) hosting the novel app and the world console
+natively, with a token-usage dashboard.
+
+## MCP for AI agents
+
+`worldsim-mcp/server.py` is a zero-dependency MCP stdio server (26 tools, incl.
+`world_loop_start`, `world_rewind`, `world_readiness`, `world_novel_generate`,
+`world_seed_novel`) for Codex CLI / Trae / Claude / Cursor. Setup guides:
+`worldsim-mcp/codex.md` and `worldsim-mcp/trae.md`; the repo-root `AGENTS.md`
+documents collaboration conventions.
+
+## Downloads
+
+Prebuilt binaries for Linux (amd64/arm64), Windows, macOS (amd64/arm64), the
+Operit plugin package (26 tools + WebUI + 15 theme packs + style corpus) and the
+MCP server package are all on
+[Releases](https://github.com/2033121/worldsim/releases). Tagging `v*` triggers
+GitHub Actions to cross-compile all 5 platforms and assemble the assets
+automatically.
+
+## Security & IP
+
+- `api.json` holds real keys — git-ignored, never commit. Use placeholders in examples.
+- `worlds/` `storys/` are personal world data, never committed.
+- `material/` (the style corpus, each excerpt credited with source book + chapter, style-reference only) **is** open-sourced in this repo.
+
+## License
+
+[MIT](LICENSE)
