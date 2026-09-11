@@ -26,6 +26,7 @@ WorldSim 是"多Agent世界模拟器 → 网文生产引擎"：模拟一个世�
 
 - **题材自适应**：任何世界同一套引擎。修仙=测灵根/丹炉/宗门，末世=搜寻/尸潮/营地，别拿别的题材模板套
 - **决策翻案**：用户明确说"选B"就 `world_decision_resolve`，后续按用户方向写
+- **文字游戏模式（Play Mode）**：同一世界可"直接玩"，走 HTTP API（不走 MCP）：`POST /api/game/start`（开局，会自动暂停模拟循环）→ `POST /api/game/action`（{input, mode: do|say|story}）→ `POST /api/game/wait`（等待=世界自转+回血）；游戏页 `GET /game`。**数值与掷骰在代码层**（`game.json`：d20+属性修正 vs 裁判申报的 DC），LLM 只做裁判与第二人称叙事，不许在叙述里改数值
 - **就绪度不是天数**：看 `world_readiness`，别等"跑满N天"
 - **LLM 超时容忍**：中转站慢时单日失败会 dry-run 兜底，循环自愈重试；长时间不动用 `world_rewind` 回退
 - **安全**：`api.json` 含真实密钥，**永不提交**（.gitignore 已排除）；`worlds/` `material/` 不入库

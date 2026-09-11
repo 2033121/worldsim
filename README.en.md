@@ -12,6 +12,7 @@
 ## What makes it different
 
 - **Readiness-driven, not day-driven** — the simulation ends when there is *enough material to write from* (chapter seeds ≥3 + dramatic beats ≥12 + ≥1 foreshadow paid off + tension ≥0.4), not after "N days". Cultivation settings skip years; apocalypse settings move day by day; the LLM infers the time scale from the worldbook.
+- **Playable text-game mode (Play Mode)** — the same world you simulated, now playable: free-form input in three modes (do / say / story). **Fate lives in the dice, not the prompt**: the code rolls d20 + attribute modifier vs a difficulty the referee LLM declares; the code owns the numbers (HP / level / XP / inventory / quest, persisted in `game.json`). The LLM does exactly two things — map your input to intent + difficulty, and narrate the already-decided outcome in second person. A "wait" turn advances the world on its own and heals you. Game stats sync back into engine entities, so a played session can feed the novel pipeline too. Opening a session auto-pauses the background simulation (turn-based, no token burn while idle). UI: `GET /game`.
 - **Debate-to-novel pipeline** — a GM agent adjudicates against the worldbook, an event agent generates beats from the B5 event spectrum, the protagonist answers three value/ability/world-line questions, NPCs run Init→Act→React chains, and a foreshadow ledger tracks planting→ripening→payoff.
 - **De-AI-flavored prose** — 886+ excerpts from real published web novels (source-titled) plus six writing methodology layers injected as prompts (memory pins, conflict hooks, sensory specificity, POV discipline, banned高频词).
 - **Forgiving runtime** — event-sourced state engine with snapshot rewind to any anchor; an embedded self-healing module monitors LLM availability, service liveness, data integrity and loop stalls, and repairs automatically (snapshot rollback, dry-run fallback, loop interruption to stop token burn).
@@ -39,6 +40,12 @@ curl -X POST localhost:48091/api/world/loop -H 'Content-Type: application/json' 
 curl localhost:48091/api/world/readiness          # ends early when ready
 curl -X POST localhost:48091/api/world/novel/generate
 curl localhost:48091/api/world/novel/chapter/1
+
+# — or just play it: text-game mode on the same world —
+curl -X POST localhost:48091/api/game/start                                   # generates theme-fit panel + scene
+curl -X POST localhost:48091/api/game/action -H 'Content-Type: application/json' \
+  -d '{"input":"inspect the broken sword blank","mode":"do"}'                  # code rolls, LLM narrates
+curl -X POST localhost:48091/api/game/wait                                     # world ticks on, you heal
 ```
 
 Or open `http://localhost:48092` — the unified front end (browser-style shell:

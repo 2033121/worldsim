@@ -27,6 +27,7 @@ import (
 	"worldsim/internal/attach"
 	"worldsim/internal/config"
 	"worldsim/internal/engine"
+	game "worldsim/internal/game"
 	"worldsim/internal/health"
 	"worldsim/internal/httpapi"
 	"worldsim/internal/llm"
@@ -184,6 +185,8 @@ type worldInstance struct {
 	created  bool           // 是否已初始化世界状态（主角等）
 	lastDay  *sim.DayResult // 最近一次模拟结果（手动跑天/后台循环都会更新，供"今日对话/事件"面板）
 	attach   *attach.Store  // 世界参考资料附件存储（worlds/{世界名}/attachments/）
+	game     *game.Game     // 文字游戏游玩会话（worlds/{世界名}/game.json）
+	gameOnce sync.Once      // 懒加载 game 会话
 }
 
 func (w *worldInstance) ready() bool { return w != nil && w.engine != nil }
@@ -218,6 +221,15 @@ func startWorldServer(worldDir string, apiCfg *config.APIConfig, ra *research.Ag
 	mux.HandleFunc("POST /api/world/novel/generate", ws.handleNovelGenerate)
 	mux.HandleFunc("GET /api/world/novel", ws.handleNovelList)
 	mux.HandleFunc("GET /api/world/novel/chapter/{num}", ws.handleNovelChapter)
+
+	// 文字游戏游玩模式（Play Mode）：数值/检定在代码层，LLM 只做裁判/叙述
+	mux.HandleFunc("GET /api/game/status", ws.handleGameStatus)
+	mux.HandleFunc("POST /api/game/start", ws.handleGameStart)
+	mux.HandleFunc("POST /api/game/action", ws.handleGameAction)
+	mux.HandleFunc("POST /api/game/wait", ws.handleGameWait)
+	mux.HandleFunc("POST /api/game/stop", ws.handleGameStop)
+	mux.HandleFunc("GET /api/game/log", ws.handleGameLog)
+	mux.HandleFunc("GET /game", ws.handleGamePage)
 
 	// 世界参考资料附件：上传 / 列表 / 删除
 	mux.HandleFunc("POST /api/world/attach/upload", ws.handleAttachUpload)

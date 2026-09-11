@@ -15,6 +15,7 @@
 ## ✨ 特性
 
 - **多Agent世界模拟**：总导演(GM)/事件Agent/主角三问决策/感知分发/NPC互动/小说写手，各司其职
+- **文字游戏游玩模式（Play Mode）**：一手开世界，一手当玩家——自由输入（行动/说话/叙事三模式），**命运在骰子上**：代码层掷骰（d20+属性修正 vs 难度）+ 代码持有数值层（HP/等级/经验/背包/任务，`game.json` 落盘），LLM 只有两件事——把你的输入裁决成意图与难度、把既定结果讲成第二人称叙事；「等待」回合世界自转+休息回血；回合数值同步回引擎实体，游戏产物可反向喂小说播种；开局时后台模拟自动暂停，回合制不空转烧 token
 - **任意题材通用**：15个主题包（修仙/末世/西幻/克苏鲁/都市/星际/历史…）+ 通用世界书骨架 → 一句话创建新世界
 - **时间尺度自适应**：修仙跳年、末世跳日、星际按标准时——LLM 从世界书自行判断，不硬编码
 - **就绪度驱动**：模拟不按天数结束，按"素材够不够写小说"（段落/戏剧素材/伏笔回收/张力）自动判定
@@ -110,6 +111,16 @@ curl -X POST localhost:48091/api/world/loop \
 curl localhost:48091/api/world/readiness
 curl -X POST localhost:48091/api/world/novel/generate
 curl localhost:48091/api/world/novel/chapter/1
+
+# —— 换个玩法：把同一个世界直接玩起来（文字游戏模式）——
+# 开局（自动暂停模拟循环；LLM 生成主题适配的属性表/开场）
+curl -X POST localhost:48091/api/game/start
+# 行动一回合（do|say|story 三模式；代码掷骰，LLM 叙述结果）
+curl -X POST localhost:48091/api/game/action \
+  -H 'Content-Type: application/json' \
+  -d '{"input":"检查剑胚是否可用","mode":"do"}'
+# 等待一回合（世界自转+休息回血）；浏览器直开 http://localhost:48091/game 有终端风游戏页
+curl -X POST localhost:48091/api/game/wait
 ```
 
 ## 📚 API 一览
@@ -122,6 +133,7 @@ curl localhost:48091/api/world/novel/chapter/1
 | 决策 | `GET /api/world/decisions` `POST /api/world/decisions/{id}` |
 | 时间回退 | `GET /api/world/snapshots` `POST /api/world/snapshot` `POST /api/world/rewind` |
 | 小说 | `POST /api/world/novel/generate` `GET /api/world/novel` `GET /api/world/novel/chapter/{num}` |
+| 文字游戏 | `GET /api/game/status` `POST /api/game/start` `POST /api/game/action` `POST /api/game/wait` `POST /api/game/stop` `GET /api/game/log`（UI：`GET /game`） |
 | 主题包 | `GET /api/worldbooks/themes` |
 | 统计 | `GET /api/world/token_stats` `GET /api/world/sim/thinking` |
 

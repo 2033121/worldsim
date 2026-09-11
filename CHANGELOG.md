@@ -2,6 +2,25 @@
 
 本项目所有重要变更都记录在此。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [1.6.0] - 2026-08-05
+
+### ✨ 新增
+- **文字游戏游玩模式（Play Mode）**：把「世界模拟器 → 小说引擎」升级为「也能直接玩」——同一世界两种用法（模拟出小说 / 亲自下场玩）
+  - **新包 `internal/game`**：数值层由代码持有（HP/等级/经验/背包/任务/属性表，落盘 `worlds/<世界>/game.json`，重启可续），LLM 不靠 prompt 记数字
+  - **回合管线**：玩家自由输入（do行动/say说话/story叙事三模式）→ 裁判 LLM 输出意图+难度+申报变更 → **代码掷骰**（d20+属性修正 vs DC，nat20 必成/nat1 必败）→ 叙述者把既定结果讲成第二人称游戏叙事 → 落账 `game.json`
+  - **等级系统**：经验每 100 点升级，升级上限+10 且满血；属性增减由裁判申报、代码统一收数（1~10）
+  - **等待回合 `POST /api/game/wait`**：世界自转（NPC/环境动态由裁判给出）+ 休息回血（每次上限 10%）
+  - **开局 `POST /api/game/start`**：自动暂停后台模拟循环（回合制不空转烧 token），LLM 生成主题适配的属性表（修仙=炼气/体魄/心性…不硬编码）
+  - **数值层→引擎同步**：每回合把 HP 比例→`health`、金币→`money`、地点→`location`、面板→`stats.game` 提交进事件溯源引擎并落盘——游戏产物反向喂小说播种链路
+  - **终端风游戏页**：`GET /game`（自包含单文件 HTML，embed 进二进制，零外部资源）
+  - **HTTP API**：`GET /api/game/status` `POST /api/game/start|action|wait|stop` `GET /api/game/log`
+  - **单元测试**：`internal/game/game_test.go`（掷骰边界/收数与升级/持久化/等待回血/停服守卫/JSON 打捞）
+
+### ✅ 验证
+- `go build ./...` 与 `go vet ./...` 通过
+- `go test ./internal/game/...` 全绿（6/6）
+- 端到端冒烟：建世界 → init → start → action → wait → `world_state.json` 中 `stats.game`/`health`/`money` 同步落盘全数通过（断言式冒烟脚本）
+
 ## [1.5.0] - 2026-08-05
 
 ### ✨ 新增

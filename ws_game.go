@@ -1,0 +1,336 @@
+package main
+
+// ws_game.go — 「文字游戏」游玩模式（Play Mode）的 HTTP 层。
+//
+// 设计：internal/game 持有数值层（game.json）；本文件负责：
+//   ① 从 engine 状态拼装"世界上下文包"喂给裁判/叙述者；
+//   ② 每回合把游戏面板变化映射回 engine.Changes（health/money/location/stats.game），
+//      保证世界→小说播种链路继续消费这些数据；
+//   ③ 开局时暂停后台模拟循环（游玩优先，回合制——玩家不动世界不空转）。
+//
+// 端点（挂在 :48091，统一网关 48092 的 /api/* 自动转发）：
+//   GET  /api/game/status — 面板 + 引擎侧主角快照
+//   POST /api/game/start  — 进入游玩模式（自动停循环，LLM 生成主题适配面板+开场）
+//   POST /api/game/action — 一回合：{input, mode(do|say|story)}
+//   POST /api/game/wait   — 等待回合（世界自转+休息回血）
+//   POST /api/game/stop   — 退出游玩模式
+//   GET  /api/game/log    — 游戏账本（最近 200 回合）
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"worldsim/internal/engine"
+	game "worldsim/internal/game"
+)
+
+func (w *worldInstance) lazyGame() *game.Game {
+	w.gameOnce.Do(func() {
+		w.game = game.Load(w.dir)
+	})
+	return w.game
+}
+
+// gameCtx 拼装世界上下文包（裁判/叙述者共用）：主角引擎快照 + 在场角色 + 最近编年史
+func (w *worldInstance) gameCtx() string {
+	if w == nil || w.engine == nil {
+		return "（引擎未加载）"
+	}
+	st := w.engine.State()
+	var b strings.Builder
+	hero := ""
+	if w.sim != nil {
+		hero = w.sim.HeroName()
+	}
+	if hero == "" {
+		hero = w.heroName
+	}
+	if e, ok := st.Entities[hero]; ok {
+		b.WriteString(fmt.Sprintf("主角引擎快照：位置=%s 健康=%.0f 资产=%v 职业=%s 存活=%v\n",
+			e.Location, e.Health, e.Assets, e.Job, e.Alive))
+		// 在场角色（同地点 + active）
+		present := []string{}
+		for name, ent := range st.Entities {
+			if name == hero || ent.Status != "active" {
+				continue
+			}
+			role, _ := e.Extra["role"].(string)
+			_ = role
+			if e.Location != "" && ent.Location == e.Location {
+				present = append(present, name)
+			}
+		}
+		if len(present) > 0 {
+			b.WriteString("同地点角色：" + strings.Join(present, "、") + "\n")
+		}
+	} else {
+		b.WriteString("（主角实体未初始化：世界尚未 init）\n")
+	}
+	b.WriteString(fmt.Sprintf("世界：%s 第%d天 天气=%s\n", w.name, st.Day, st.Weather))
+	if w.wb != nil {
+		if rule := w.wb.WorldRule(); rule != "" {
+			b.WriteString("世界规则：" + rule + "\n")
+		}
+	}
+	// 最近编年史（对比深度裁剪，防上下文爆炸）
+	if w.sim != nil {
+		tries := 6
+		for i := len(w.sim.Chronicle()) - 1; i >= 0 && tries > 0; i-- {
+			e := w.sim.Chronicle()[i]
+			content := e.Content
+			if len(content) > 120 {
+				content = content[:120]
+			}
+			b.WriteString(fmt.Sprintf("编年史#%d：%s\n", e.Day, content))
+			tries--
+		}
+	}
+	return b.String()
+}
+
+// POST /api/game/start — 进入游玩模式
+func (ws *worldServer) handleGameStart(w http.ResponseWriter, r *http.Request) {
+	inst := ws.inst()
+	if inst == nil {
+		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": "没有可用世界，请先创建"})
+		return
+	}
+	// 游玩优先：暂停后台模拟循环（回合制，玩家不动世界不空转）
+	ws.loopMu.Lock()
+	if ws.loopCancel != nil {
+		ws.loopCancel()
+		ws.loopRunning = false
+	}
+	ws.loopMu.Unlock()
+
+	g := inst.lazyGame()
+	hero := inst.heroName
+	if inst.sim != nil && inst.sim.HeroName() != "" {
+		hero = inst.sim.HeroName()
+	}
+	brief := ""
+	if e, ok := inst.engine.State().Entities[hero]; ok {
+		if j, err := json.Marshal(e); err == nil {
+			brief = string(j)
+		}
+	}
+	worldDesc := ""
+	if inst.wb != nil {
+		worldDesc = inst.wb.WorldRule()
+	}
+	scene, err := g.Start(r.Context(), callerFrom(inst), inst.name, worldDesc, hero, brief)
+	if err != nil {
+		ws.writeJSON(w, 500, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	ws.writeJSON(w, 200, map[string]any{"ok": true, "scene": scene, "state": g.StateCurrent()})
+}
+
+// callerFrom 把 inst.llm 转成游戏包的 Caller（含世界参考资料注入与 Mock 模式）
+func callerFrom(inst *worldInstance) game.Caller {
+	if inst == nil || inst.llm == nil {
+		return nil
+	}
+	cli := inst.llm
+	return func(ctx context.Context, tier, system, user string) (string, error) {
+		return cli.CompleteTier(ctx, tier, system, user)
+	}
+}
+
+// POST /api/game/action — 一回合
+func (ws *worldServer) handleGameAction(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	inst := ws.inst()
+	if inst == nil {
+		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": "没有可用世界"})
+		return
+	}
+	var req struct {
+		Input string `json:"input"`
+		Mode  string `json:"mode"` // do | say | story
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": "参数错误"})
+		return
+	}
+	g := inst.lazyGame()
+	st := g.StateCurrent()
+	if !st.Enabled {
+		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": "游戏未开启，先 POST /api/game/start"})
+		return
+	}
+	// 回合期间禁止后台模拟并发写状态
+	ws.loopMu.Lock()
+	if ws.loopCancel != nil {
+		ws.loopCancel()
+		ws.loopRunning = false
+	}
+	ws.loopMu.Unlock()
+
+	day := inst.engine.State().Day
+	// 独立 context：客户端断连不影响回合完成
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
+	defer cancel()
+	narr, err := g.Turn(ctx, callerFrom(inst), day, req.Input, req.Mode, inst.gameCtx())
+	if err != nil {
+		ws.writeJSON(w, 500, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	// 数值层 → 引擎同步（世界→小说播种链路继续可用）
+	syncGameToEngine(inst, g)
+	ws.writeJSON(w, 200, map[string]any{
+		"ok": true, "narration": narr, "state": g.StateCurrent(),
+		"elapsed_ms": time.Since(start).Milliseconds(),
+	})
+}
+
+// POST /api/game/wait — 等待回合
+func (ws *worldServer) handleGameWait(w http.ResponseWriter, r *http.Request) {
+	inst := ws.inst()
+	if inst == nil {
+		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": "没有可用世界"})
+		return
+	}
+	g := inst.lazyGame()
+	if !g.StateCurrent().Enabled {
+		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": "游戏未开启，先 POST /api/game/start"})
+		return
+	}
+	ws.loopMu.Lock()
+	if ws.loopCancel != nil {
+		ws.loopCancel()
+		ws.loopRunning = false
+	}
+	ws.loopMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
+	defer cancel()
+	narr, err := g.Wait(ctx, callerFrom(inst), inst.engine.State().Day, inst.gameCtx())
+	if err != nil {
+		ws.writeJSON(w, 500, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	syncGameToEngine(inst, g)
+	ws.writeJSON(w, 200, map[string]any{"ok": true, "narration": narr, "state": g.StateCurrent()})
+}
+
+// POST /api/game/stop — 退出游玩模式
+func (ws *worldServer) handleGameStop(w http.ResponseWriter, r *http.Request) {
+	inst := ws.inst()
+	if inst == nil {
+		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": "没有可用世界"})
+		return
+	}
+	inst.lazyGame().Stop()
+	ws.writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// GET /api/game/status — 面板 + 引擎侧主角快照
+func (ws *worldServer) handleGameStatus(w http.ResponseWriter, r *http.Request) {
+	inst := ws.inst()
+	if inst == nil {
+		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": "没有可用世界"})
+		return
+	}
+	g := inst.lazyGame().StateCurrent()
+	resp := map[string]any{"ok": true, "game": g}
+	if inst.engine != nil {
+		hero := inst.heroName
+		if inst.sim != nil && inst.sim.HeroName() != "" {
+			hero = inst.sim.HeroName()
+		}
+		if e, ok := inst.engine.State().Entities[hero]; ok {
+			resp["entity"] = e
+		}
+		resp["day"] = inst.engine.State().Day
+	}
+	ws.writeJSON(w, 200, resp)
+}
+
+// GET /api/game/log — 游戏账本
+func (ws *worldServer) handleGameLog(w http.ResponseWriter, r *http.Request) {
+	inst := ws.inst()
+	if inst == nil {
+		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": "没有可用世界"})
+		return
+	}
+	ws.writeJSON(w, 200, map[string]any{"ok": true, "log": inst.lazyGame().StateCurrent().Log})
+}
+
+// syncGameToEngine 把游戏面板映射回引擎实体（health/money/location/stats.game）——供养小说播种等下游
+func syncGameToEngine(inst *worldInstance, g *game.Game) {
+	if inst == nil || inst.engine == nil {
+		return
+	}
+	hero := inst.heroName
+	if inst.sim != nil && inst.sim.HeroName() != "" {
+		hero = inst.sim.HeroName()
+	}
+	st := inst.engine.State()
+	e, ok := st.Entities[hero]
+	if !ok {
+		return
+	}
+	gs := g.StateCurrent()
+	base := st.Revision
+	changes := []engine.Change{}
+	// health：engine 侧按 0~100 刻度；game 侧 HP/MaxHP 比例换算，避免双写漂移（seed/小说播种可读）
+	newHealth := float64(0)
+	if gs.MaxHP > 0 {
+		newHealth = float64(gs.HP) / float64(gs.MaxHP) * 100
+	}
+	if (newHealth-e.Health) > 0.5 || (e.Health-newHealth) > 0.5 {
+		changes = append(changes, engine.Change{Path: fmt.Sprintf("entities.%s.health", hero), Op: "set", Value: newHealth})
+	}
+	if uintGS(gs.Gold) != e.Money {
+		changes = append(changes, engine.Change{Path: fmt.Sprintf("entities.%s.money", hero), Op: "set", Value: float64(gs.Gold)})
+	}
+	if gs.Location != "" && gs.Location != e.Location {
+		changes = append(changes, engine.Change{Path: fmt.Sprintf("entities.%s.location", hero), Op: "set", Value: gs.Location})
+	}
+	// stats.game：面板核心（供播种/复盘）
+	panel, _ := json.Marshal(map[string]any{
+		"turn": gs.Turn, "level": gs.Level, "hp": gs.HP, "max_hp": gs.MaxHP,
+		"gold": gs.Gold, "xp": gs.XP, "inventory": gs.Inventory, "quest": gs.Quest,
+	})
+	if existing, ok2 := e.Stats["game"]; !ok2 || fmt.Sprint(existing) != string(panel) {
+		changes = append(changes, engine.Change{Path: fmt.Sprintf("entities.%s.stats.game", hero), Op: "set", Value: json.RawMessage(panel)})
+	}
+	if len(changes) == 0 {
+		return
+	}
+	prop := engine.Proposal{
+		CommandID:    fmt.Sprintf("game-%04d", gs.Turn),
+		ActorID:      "player",
+		BaseRevision: base,
+		Type:         "state_change",
+		Changes:      changes,
+		Reason:       "游玩模式回合落账（数值层→引擎同步）",
+	}
+	if err := inst.engine.Submit(context.Background(), &prop); err != nil {
+		fmt.Printf(" [游戏] 引擎同步失败（下次回合重试）：%v\n", err)
+		return
+	}
+	// 落盘：同步到底不发就等于没发生（断电/重启后播种读到旧值）
+	if err := inst.engine.Save(filepath.Join(inst.dir, "world_state.json")); err != nil {
+		fmt.Printf(" [游戏] 引擎落盘失败：%v\n", err)
+	}
+}
+
+func uintGS(i int) float64 { return float64(i) }
+
+// GET /game — 自包含游戏页（终端风 UI，零外部资源，embed 进二进制）
+func (ws *worldServer) handleGamePage(w http.ResponseWriter, r *http.Request) {
+	data, err := wsWeb.ReadFile("wsweb/game.html")
+	if err != nil {
+		http.Error(w, "游戏页未安装", 404)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(data)
+}
