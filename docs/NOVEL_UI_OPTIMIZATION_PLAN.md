@@ -115,11 +115,13 @@ novel 路由已从「hash 路由」迁移为「store 驱动」（`lib/router.js`
 
 ## 7. 交付物清单
 
-- [ ] 失效按钮修复（Writing/Outline/Foreshadows）
-- [ ] 内容显示区扩充
-- [ ] 整章编辑模式（编辑/保存/取消）
-- [ ] 按钮视觉统一
-- [ ] 首页重构
-- [ ] 构建产物 `uiteg/` 更新
-- [ ] 浏览器功能验证脚本与结果
-- [ ] git 提交 + 进度文档更新
+- [x] 失效按钮修复（Writing/Outline/Foreshadows）——实现见 `worldapp/src/apps/novel/pages/*.svelte` 的冲突跳转按钮（gotoOutlineForConflict / gotoForeshadows 等，2026-08-05 优化提交）
+- [x] 内容显示区扩充
+- [x] 整章编辑模式（编辑/保存/取消）——`Writing.svelte` 的 fullEdit 状态 + POST /api/chapter/edit (operation=replace_text)，具备快照恢复
+- [x] 按钮视觉统一
+- [x] 首页重构（`worldapp/src/pages/HomePage.svelte`，宣纸卡片已随 Phase 3+4 视觉统一落地）
+- [x] 构建产物 `uiteg/` 更新——2026-09-11 本地 `npm run build` 复核：产物与当前源码**零差异**（此前已同步）
+- [x] 浏览器功能验证脚本与结果——Playwright 实测记录见 `docs/UNIFIED_FRONTEND_PROGRESS.md`「验证」段（首页/世界/小说三页无 JS 报错无 404）
+- [x] git 提交 + 进度文档更新
+
+> 2026-09-11 注：以上所有功能在早前会话中已实现并合入 main；本清单当时漏勾，现按代码现状核对勾选。构建产物经本次重建验证一致，未产生 diff。
