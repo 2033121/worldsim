@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	art "worldsim/internal/art"
 	"worldsim/internal/attach"
 	"worldsim/internal/config"
 	"worldsim/internal/engine"
@@ -39,7 +40,6 @@ import (
 	"worldsim/internal/selfheal"
 	"worldsim/internal/sim"
 	"worldsim/internal/sse"
-	art "worldsim/internal/art"
 	"worldsim/internal/worldbook"
 )
 
@@ -335,8 +335,8 @@ type worldServer struct {
 	research *research.Agent // 题材研究智能体（热门题材研究/主题规划/世界书方向产出）
 	novelMu  sync.Mutex      // 小说生成防重入锁（并发请求会写重复章号）
 
-	artManager     *art.Manager   // 美术工坊任务管理器（全局一个，懒加载）
-	artOnce        sync.Once
+	artManager *art.Manager // 美术工坊任务管理器（全局一个，懒加载）
+	artOnce    sync.Once
 
 	loopMu         sync.Mutex // 后台持续运行控制
 	loopRunning    bool       // 循环是否在跑

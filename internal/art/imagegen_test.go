@@ -3,11 +3,11 @@ package art
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"image"
 	"image/color"
 	"image/png"
-	"encoding/base64"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"

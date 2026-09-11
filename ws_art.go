@@ -58,18 +58,18 @@ func (ws *worldServer) handleArtConfigGet(w http.ResponseWriter, r *http.Request
 		"ok":      true,
 		"enabled": cfg.Enabled(),
 		"config": map[string]any{
-			"provider":       cfg.Provider,
-			"base_url":       cfg.BaseURL,
-			"model":          cfg.Model,
-			"api_key_masked": cfg.MaskedKey(),
-			"api_key_env":    cfg.APIKeyEnv,
-			"size":           cfg.Size,
-			"quality":        cfg.Quality,
+			"provider":        cfg.Provider,
+			"base_url":        cfg.BaseURL,
+			"model":           cfg.Model,
+			"api_key_masked":  cfg.MaskedKey(),
+			"api_key_env":     cfg.APIKeyEnv,
+			"size":            cfg.Size,
+			"quality":         cfg.Quality,
 			"timeout_seconds": cfg.TimeoutSeconds,
-			"max_retries":    cfg.MaxRetries,
-			"max_concurrent": cfg.MaxConcurrent,
-			"user_agent":     cfg.UserAgent,
-			"quantize":       cfg.Quantize,
+			"max_retries":     cfg.MaxRetries,
+			"max_concurrent":  cfg.MaxConcurrent,
+			"user_agent":      cfg.UserAgent,
+			"quantize":        cfg.Quantize,
 		},
 	})
 }
@@ -319,7 +319,8 @@ func (ws *worldServer) handleArtHistory(w http.ResponseWriter, r *http.Request) 
 }
 
 // GET /art/{file} — 当前世界 sprite 直出：
-//   <world>/art/sprites/{file} → docs/art/pixel/{detectTheme}/sprites/{file} → docs/art/pixel/{theme}/{file}
+//
+//	<world>/art/sprites/{file} → docs/art/pixel/{detectTheme}/sprites/{file} → docs/art/pixel/{theme}/{file}
 func (ws *worldServer) handleArtFile(w http.ResponseWriter, r *http.Request) {
 	file := r.PathValue("file")
 	if file == "" || !strings.HasSuffix(file, ".png") || strings.Contains(file, "/") {

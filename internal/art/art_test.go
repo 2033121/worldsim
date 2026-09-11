@@ -167,7 +167,7 @@ func TestLoadSaveConfig(t *testing.T) {
 
 func TestGuessTheme(t *testing.T) {
 	cases := map[string]string{
-		"# 世界书：九州·凡尘仙途\n## A1 世界观\n修仙世界": "xianxia",
+		"# 世界书：九州·凡尘仙途\n## A1 世界观\n修仙世界":  "xianxia",
 		"# 世界书：浮城·异能打工人\n## A1 世界观\n都市异能": "urban",
 	}
 	for raw, want := range cases {

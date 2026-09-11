@@ -49,15 +49,15 @@ type Job struct {
 
 // HistoryEntry 生成记录（追溯/重掷）
 type HistoryEntry struct {
-	Time        string `json:"time"`
-	World       string `json:"world"`
-	Kind        string `json:"kind"` // sheet|single|heal
-	Label       string `json:"label"`
-	Index       int    `json:"index,omitempty"`
-	Prompt      string `json:"prompt"`
-	Size        string `json:"size"`
-	Bytes       int    `json:"bytes"`
-	Note        string `json:"note,omitempty"`
+	Time   string `json:"time"`
+	World  string `json:"world"`
+	Kind   string `json:"kind"` // sheet|single|heal
+	Label  string `json:"label"`
+	Index  int    `json:"index,omitempty"`
+	Prompt string `json:"prompt"`
+	Size   string `json:"size"`
+	Bytes  int    `json:"bytes"`
+	Note   string `json:"note,omitempty"`
 }
 
 // Manager 美术任务管理器（挂在 worldServer 上，全局一个）

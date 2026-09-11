@@ -24,12 +24,12 @@ import (
 
 // PlanAsset 单个素材条目
 type PlanAsset struct {
-	Name   string `json:"name"`             // 中文名（林九 / 储物袋）
-	Role   string `json:"role,omitempty"`   // 人物/怪物角色定位
-	Look   string `json:"look,omitempty"`   // 中文外观速写（UI 展示/用户改写用）
-	Kind   string `json:"kind,omitempty"`   // tile/item 功能分类（safe_ground / consumable）
-	Time   string `json:"time,omitempty"`   // scene 专用：morning|dusk|night
-	Prompt string `json:"prompt"`           // 英文提示词正文（粘贴即用）
+	Name   string `json:"name"`           // 中文名（林九 / 储物袋）
+	Role   string `json:"role,omitempty"` // 人物/怪物角色定位
+	Look   string `json:"look,omitempty"` // 中文外观速写（UI 展示/用户改写用）
+	Kind   string `json:"kind,omitempty"` // tile/item 功能分类（safe_ground / consumable）
+	Time   string `json:"time,omitempty"` // scene 专用：morning|dusk|night
+	Prompt string `json:"prompt"`         // 英文提示词正文（粘贴即用）
 }
 
 // Plan 素材规划（plan.json 结构）
@@ -37,7 +37,7 @@ type Plan struct {
 	Version    int         `json:"version"`
 	Theme      string      `json:"theme"`
 	Title      string      `json:"title,omitempty"`
-	Palette    string      `json:"palette"`              // 调色板文字描述
+	Palette    string      `json:"palette"`               // 调色板文字描述
 	PaletteHex []string    `json:"palette_hex,omitempty"` // 锁一致性的十六进制色板
 	Characters []PlanAsset `json:"characters"`
 	Monsters   []PlanAsset `json:"monsters"`

@@ -149,8 +149,8 @@ type pixellabProvider struct {
 }
 
 type pixellabRequest struct {
-	Description          string `json:"description"`
-	ImageSize            struct {
+	Description string `json:"description"`
+	ImageSize   struct {
 		Width  int `json:"width"`
 		Height int `json:"height"`
 	} `json:"image_size"`

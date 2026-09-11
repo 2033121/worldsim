@@ -21,20 +21,20 @@ import (
 
 // Config 图片生成配置（存 progDir/img.json；结构对齐 api.json 惯例）
 type Config struct {
-	Provider       string `json:"provider"`                  // openai_images（默认）| pixellab
-	BaseURL        string `json:"base_url"`                  // 如 http://ai.jiuqingyunapi.top 或 https://api.pixellab.ai/v1
-	Model          string `json:"model"`                     // gpt-image-2 / pixflux 等；openai_images 用
-	APIKey         string `json:"api_key,omitempty"`         // 直接写（本地部署场景）；优先级高于环境变量
-	APIKeyEnv      string `json:"api_key_env,omitempty"`     // 从该环境变量读 key（默认 GPTIMG_KEY，兜底 GPT_IMAGE_API_KEY）
-	Size           string `json:"size"`                      // 默认 1536x1024（sheet 主尺寸）
-	Quality        string `json:"quality,omitempty"`         // openai_images 可选 quality 字段
-	UserAgent      string `json:"user_agent,omitempty"`      // 默认 curl/8.5.0（中转站 WAF 拦常见程序 UA，实测需要）
-	TimeoutSeconds int    `json:"timeout_seconds"`           // 单张生成超时，默认 300
-	MaxRetries     int    `json:"max_retries"`               // 失败重试次数，默认 3（退避 1s/3s/9s）
-	MaxConcurrent  int    `json:"max_concurrent"`            // 并发生成上限，默认 2
-	Quantize       bool   `json:"quantize,omitempty"`        // 预留：调色板量化（v1.8 未实现，默认关）
-	ExtraOutline   string `json:"extra_outline,omitempty"`   // pixellab outline 参数（默认 single color black outline）
-	ExtraShading   string `json:"extra_shading,omitempty"`   // pixellab shading（默认 basic shading）
+	Provider       string `json:"provider"`                // openai_images（默认）| pixellab
+	BaseURL        string `json:"base_url"`                // 如 http://ai.jiuqingyunapi.top 或 https://api.pixellab.ai/v1
+	Model          string `json:"model"`                   // gpt-image-2 / pixflux 等；openai_images 用
+	APIKey         string `json:"api_key,omitempty"`       // 直接写（本地部署场景）；优先级高于环境变量
+	APIKeyEnv      string `json:"api_key_env,omitempty"`   // 从该环境变量读 key（默认 GPTIMG_KEY，兜底 GPT_IMAGE_API_KEY）
+	Size           string `json:"size"`                    // 默认 1536x1024（sheet 主尺寸）
+	Quality        string `json:"quality,omitempty"`       // openai_images 可选 quality 字段
+	UserAgent      string `json:"user_agent,omitempty"`    // 默认 curl/8.5.0（中转站 WAF 拦常见程序 UA，实测需要）
+	TimeoutSeconds int    `json:"timeout_seconds"`         // 单张生成超时，默认 300
+	MaxRetries     int    `json:"max_retries"`             // 失败重试次数，默认 3（退避 1s/3s/9s）
+	MaxConcurrent  int    `json:"max_concurrent"`          // 并发生成上限，默认 2
+	Quantize       bool   `json:"quantize,omitempty"`      // 预留：调色板量化（v1.8 未实现，默认关）
+	ExtraOutline   string `json:"extra_outline,omitempty"` // pixellab outline 参数（默认 single color black outline）
+	ExtraShading   string `json:"extra_shading,omitempty"` // pixellab shading（默认 basic shading）
 }
 
 // DefaultConfig 返回骨架配置（未配密钥时模块软禁用，服务不受影响）
