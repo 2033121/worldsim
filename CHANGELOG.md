@@ -21,6 +21,18 @@
 - `go test ./internal/game/...` 全绿（6/6）
 - 端到端冒烟：建世界 → init → start → action → wait → `world_state.json` 中 `stats.game`/`health`/`money` 同步落盘全数通过（断言式冒烟脚本）
 
+## [1.6.1] - 2026-08-05
+
+### ✨ 新增（游玩模式收尾三件）
+- **统一前端入口 :48092 真实落地**：此前 README 宣告 48092 网关但仓库里没有监听实现（selfheal 探活项一直 unhealthy）；新增 `ws_gateway.go`——uiteg 外壳（SPA fallback）+ `/api/novel/*`→48090、其余 `/api/*` 与 `/game` 代理到 48091；worldapp 首页新增第三张入口卡「文字游戏」+ 完整 `game` 路由页（`.svelte` 组件直接玩：_do/say/story 三模式 + 掷骰展示 + 面板_）
+- **MCP 新增 4 个游戏工具**：`world_game_start` / `world_game_play`（input+mode）/ `world_game_wait` / `world_game_status`——AI 客户端（Codex/Trae/Claude）可直接陪玩或代打；工具总数 26→30
+- **游玩属性数据层**：世界书新增可选段 `## 游玩属性`（`- 属性名: 1~10`），15 个主题包各自预置主题适配属性表（修仙=炼气/体魄/道心/灵识，末世=体能/搜刮/冷静/装备…），通用模板补说明；`Worldbook.GameAttrs()` 解析（全中文冒号/半角/带引号行跳过均有测试）；开局降级顺序 = LLM 现场生成 → 世界书数据段 → 通用三属性，任意一层都不硬编码属性名
+
+### ✅ 验证
+- `go test ./...` 全绿（worldbook 3 新测试 + game 7/7）
+- 端到端冒烟：:48092 `/`（uiteg 外壳）、`/game`（代理）、`/api/*`（代理）全通；建世界→init→开局后 `attrs == {剑术:5, 体魄:4}`（世界书段直出，LLM 未接入也成立）→ action 回合成功
+- `worldapp npm run build` 重建 uiteg（含 GamePage），二进制 embed 校验一致
+
 ## [1.5.0] - 2026-08-05
 
 ### ✨ 新增

@@ -64,6 +64,13 @@ TOOLS = [
     {"name": "world_snapshot", "description": "手动存档（保存完整快照供时间回退）", "inputSchema": {"type": "object", "properties": {"reason": {"type": "string", "description": "存档说明（可选）"}}}},
     {"name": "world_rewind", "description": "时间回退到 ≤day 的最近快照，重新演化新分支（会先停循环）", "inputSchema": {"type": "object", "properties": {"day": {"type": "number", "description": "回退到的 Day"}}, "required": ["day"]}},
     {"name": "world_webui", "description": "返回 WebUI 控制台地址（浏览器可视化操作）", "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "world_game_start", "description": "进入文字游戏游玩模式（同一世界直接玩；开局自动暂停后台模拟循环；LLM 生成主题适配属性表+开场）", "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "world_game_play", "description": "文字游戏执行一回合：input=玩家自由输入；mode=do行动|say说话|story叙事。代码掷骰(d20+属性修正 vs 裁判申报难度)，LLM 只叙述结果；返回第二人称叙事+最新面板", "inputSchema": {"type": "object", "properties": {
+        "input": {"type": "string", "description": "玩家的行动/对话/叙事自由文本"},
+        "mode": {"type": "string", "description": "do(默认)|say|story"}
+    }, "required": ["input"]}},
+    {"name": "world_game_wait", "description": "文字游戏等待回合：世界自转 + 休息回血（每次回血上限 10%）", "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "world_game_status", "description": "文字游戏面板：等级/HP/经验/金币/属性/背包/任务/地点/最近账本", "inputSchema": {"type": "object", "properties": {}}},
 ]
 
 # ---------------- HTTP 桥接 ----------------
@@ -189,7 +196,34 @@ def call_tool(name, args):
         return json.dumps(api("POST", "/api/world/rewind", {"day": int(args["day"])}), ensure_ascii=False)
     if name == "world_webui":
         return json.dumps({"url": "http://127.0.0.1:48091",
-                           "hint": "浏览器打开即控制台：决策翻案/循环开关/时间回退/小说阅读"}, ensure_ascii=False)
+                           "hint": "浏览器打开即控制台：决策翻案/循环开关/时间回退/小说阅读；文字游戏页在 /game 或统一入口 48092"}, ensure_ascii=False)
+    if name == "world_game_start":
+        r = api("POST", "/api/game/start", {})
+        st = (r.get("state") or {})
+        return json.dumps({**r, "hint": "已进入游玩模式（后台模拟已暂停）。world_game_play 执行回合；world_game_status 查面板；world_game_stop 可用 API 结束"}, ensure_ascii=False)
+    if name == "world_game_play":
+        body = {"input": args["input"], "mode": args.get("mode", "do")}
+        r = api("POST", "/api/game/action", body)
+        if r.get("ok"):
+            st = r.get("state") or {}
+            out = {"narration": r.get("narration", ""), "panel": {k: st.get(k) for k in ("turn", "level", "hp", "max_hp", "gold", "xp", "attrs", "inventory", "location", "quest")}}
+            last = (st.get("log") or [])[-1:] or [{}]
+            if last[0].get("check"):
+                out["check"] = last[0]["check"]
+            return json.dumps(out, ensure_ascii=False)
+        return json.dumps(r, ensure_ascii=False)
+    if name == "world_game_wait":
+        r = api("POST", "/api/game/wait", {})
+        if r.get("ok"):
+            st = r.get("state") or {}
+            return json.dumps({"narration": r.get("narration", ""), "panel": {k: st.get(k) for k in ("turn", "level", "hp", "max_hp", "gold", "xp", "location", "quest")}}, ensure_ascii=False)
+        return json.dumps(r, ensure_ascii=False)
+    if name == "world_game_status":
+        r = api("GET", "/api/game/status")
+        if r.get("ok") is False or r.get("error"):
+            return json.dumps(r, ensure_ascii=False)
+        out = {"game": r.get("game"), "day": r.get("day")}
+        return json.dumps(out, ensure_ascii=False)
     raise RuntimeError(f"未知工具: {name}")
 
 # ---------------- MCP stdio 协议 ----------------

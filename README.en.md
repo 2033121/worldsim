@@ -49,8 +49,9 @@ curl -X POST localhost:48091/api/game/wait                                     #
 ```
 
 Or open `http://localhost:48092` — the unified front end (browser-style shell:
-tabs / address bar / Ctrl+K palette) hosting the novel app and the world console
-natively, with a token-usage dashboard.
+tabs / address bar / Ctrl+K palette) hosting the novel app, the world console and
+the text-game page natively, with a token-usage dashboard; serves the uiteg shell
+and proxies `/api/novel/*`→:48090, `/api/*` & `/game`→:48091.
 
 ## MCP for AI agents
 

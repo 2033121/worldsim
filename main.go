@@ -48,6 +48,9 @@ var staticFiles embed.FS
 //go:embed wsweb
 var wsWeb embed.FS
 
+//go:embed uiteg
+var uitegFS embed.FS
+
 var version = "dev"
 var searchProvider search.Provider // 全局搜索提供者（供 handleSystemStatus 使用）
 
@@ -134,6 +137,10 @@ func main() {
 	}
 	go startWorldServer(worldDir, apiCfg, researchAgent, healMgr)
 	lx.Info("系统", "世界模拟服务已启动: http://localhost%s", worldPort)
+
+	// ---------- 启动统一前端入口（:48092 浏览器式导航外壳 + API 网关） ----------
+	go startUnifiedEntry()
+	lx.Info("系统", "统一前端入口已启动: http://localhost%s", uiPort)
 
 	// ---------- 运行检测 + 自动修复 ----------
 	hc := health.New(progDir)

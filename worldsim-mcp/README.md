@@ -23,12 +23,12 @@ python3 server.py --selftest
 
 | 文件 | 说明 |
 |---|---|
-| `server.py` | MCP stdio server（26 个 `world_*` 工具，零依赖） |
+| `server.py` | MCP stdio server（30 个 `world_*` 工具，零依赖） |
 | `mcp.json.example` | 通用 mcpServers 配置模板（Codex .mcp.json / Trae JSON 导入） |
 | `codex.md` | Codex CLI/IDE 接入指南（config.toml / .mcp.json / codex mcp add） |
 | `trae.md` | Trae 接入指南（MCP 面板 stdio 添加） |
 
-## 工具（26 个）
+## 工具（30 个）
 
 世界管理：`world_list` `world_select` `world_create` `world_init` `world_state`
 模拟：`world_run_day` `world_loop_start` `world_loop_stop` `world_loop_status` `world_readiness`
@@ -36,6 +36,7 @@ python3 server.py --selftest
 时间回退：`world_snapshots` `world_snapshot` `world_rewind`
 小说：`world_novel_list` `world_novel_generate` `world_seed_novel` `world_novel_chapter`
 其他：`world_themes` `world_tokens` `world_webui`
+文字游戏：`world_game_start` `world_game_play` `world_game_wait` `world_game_status`
 
 > `world_seed_novel` 走小说服务 48090（`NOVEL_BASE`），把当前世界直接播种成小说项目（零 LLM 调用）。
 

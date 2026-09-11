@@ -172,6 +172,21 @@ func (st *GameState) clamp() string {
 	return fmt.Sprintf("声望与实力获得认可：Level up → %d（满血）", st.Level)
 }
 
+// clampAttrs 收进 1~10（外观层：数值由数据/裁判给出，代码只保证合法域）
+func clampAttrs(m map[string]int) map[string]int {
+	out := map[string]int{}
+	for k, v := range m {
+		if v < 1 {
+			v = 1
+		}
+		if v > maxAttr {
+			v = maxAttr
+		}
+		out[k] = v
+	}
+	return out
+}
+
 func zeroState() GameState {
 	return GameState{
 		Enabled:   true,
@@ -184,8 +199,9 @@ func zeroState() GameState {
 	}
 }
 
-// Start 开局：一次 LLM 调用生成"主题自适应"面板 + 开场叙事；失败走通用兜底。
-func (g *Game) Start(ctx context.Context, llm Caller, worldName, worldDesc, heroName, heroBrief string) (string, error) {
+// Start 开局：优先解码 LLM 一次调用生成的"主题自适应面板"（attrs 由裁判按世界主题生成，
+// 不硬编码）；无 LLM/失败时降级 worldbook 游玩属性段（PlayAttrs 数据层）→ 通用兜底。
+func (g *Game) Start(ctx context.Context, llm Caller, worldName, worldDesc, heroName, heroBrief string, worldAttrs map[string]int) (string, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -241,8 +257,11 @@ func (g *Game) Start(ctx context.Context, llm Caller, worldName, worldDesc, hero
 			}
 		}
 	}
-	// 无 LLM / 解析失败：确定性兜底
+	// 无 LLM / 解析失败：worldbook 游玩属性段（数据层）> 通用兜底
 	g.state = zeroState()
+	if len(worldAttrs) > 0 {
+		g.state.Attrs = clampAttrs(worldAttrs)
+	}
 	g.state.Location = "出发点"
 	g.state.Quest = "活下去，弄清这个世界"
 	scene := fmt.Sprintf("【%s】%s 睁开眼。世界书里的设定成为你眼前的现实——细节要靠你自己去碰。（未接入 LLM，这是占位开场：直接输入做什么/说什么/看哪里即可。）", worldName, heroName)

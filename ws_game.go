@@ -120,10 +120,12 @@ func (ws *worldServer) handleGameStart(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	worldDesc := ""
+	var wbAttrs map[string]int
 	if inst.wb != nil {
 		worldDesc = inst.wb.WorldRule()
+		wbAttrs = inst.wb.GameAttrs() // Play Mode 数据层默认属性表（游玩属性段，不硬编码）
 	}
-	scene, err := g.Start(r.Context(), callerFrom(inst), inst.name, worldDesc, hero, brief)
+	scene, err := g.Start(r.Context(), callerFrom(inst), inst.name, worldDesc, hero, brief, wbAttrs)
 	if err != nil {
 		ws.writeJSON(w, 500, map[string]any{"ok": false, "error": err.Error()})
 		return

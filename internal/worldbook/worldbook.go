@@ -31,6 +31,7 @@ type Worldbook struct {
 	B3ArcPlan         string // 全书弧线建议（导演内部）
 	B4Foreshadows     string // 隐藏伏笔清单（导演内部）
 	B5EventPool       string // 事件谱（本世界会发生的事，事件生成器的弹药库）
+	GameAttrsRaw      string // 游玩属性（Play Mode 数据层默认：- 属性名: 数值；世界书数据驱动，代码不硬编码）
 	CNarrative        string // 叙事约束（小说化专属）
 	C0Tone            string // 题材基调（C0，世界→小说播种的题材基调注入）
 	DSafety           string // 内容安全边界
@@ -148,6 +149,8 @@ func Parse(raw string) *Worldbook {
 			w.CNarrative = body
 		case "D":
 			w.DSafety = body
+		case "PLAY_ATTRS":
+			w.GameAttrsRaw = body
 		}
 	}
 
@@ -180,7 +183,16 @@ func Parse(raw string) *Worldbook {
 		// 匹配 "## A1 世界观" / "## A2 物理与超自然规则" / "## B1 ..." / "## E1 ..." 等
 		if strings.HasPrefix(trimmed, "## ") {
 			parts := strings.SplitN(strings.TrimPrefix(trimmed, "## "), " ", 2)
+
 			sec := strings.ToUpper(strings.TrimSpace(parts[0]))
+			// 游玩属性段（Play Mode 数据层默认属性表，非章节码标题）独立记名收集
+			if strings.Contains(trimmed, "游玩属性") {
+				flushE()
+				collect(prevSec)
+				prevSec = "PLAY_ATTRS"
+				current = []string{}
+				continue
+			}
 			if isSectionCode(sec) {
 				if sec[0] == 'E' {
 					// E段独立收集：flush上一个E段，开始新E段
@@ -481,6 +493,49 @@ func (w *Worldbook) WorldRule() string {
 		return "世界的规则以世界书设定为准；生命有极限、资源有约束、行为有后果。"
 	}
 	return w.A2Physics
+}
+
+// GameAttrs 解析游玩属性段（Play Mode 数据层默认属性表）。
+// 数据格式（世界书 Markdown，不硬编码属性名——各主题包/用户世界自行定义）：
+//
+//	## 游玩属性
+//	- 炼气: 5
+//	- 体魄: 4
+//	数值收进 1~10；无该段/格式不符返回 nil（上层走通用兜底）。
+func (w *Worldbook) GameAttrs() map[string]int {
+	if w == nil {
+		return nil
+	}
+	out := map[string]int{}
+	for _, ln := range strings.Split(w.GameAttrsRaw, "\n") {
+		t := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(ln), "-"))
+		if t == "" || strings.HasPrefix(t, "\"") || strings.HasPrefix(t, "「") {
+			continue // 非条目行（说明文字/带引号示例）
+		}
+		sep := strings.IndexAny(t, ":：")
+		if sep <= 0 {
+			continue
+		}
+		name := strings.TrimSpace(t[:sep])
+		if name == "" {
+			continue
+		}
+		val := 0
+		// 分隔符如果是全角"："（3 字节），t[sep+1:] 会切进 rune 中间——改为剔除前导分隔 rune 后再转数字
+		rest := strings.TrimLeft(t[sep:], ":\uff1a")
+		fmt.Sscanf(strings.TrimSpace(rest), "%d", &val)
+		if val < 1 {
+			val = 1
+		}
+		if val > 10 {
+			val = 10
+		}
+		out[name] = val
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // Safety 内容安全边界（所有 Agent 的行为约束）

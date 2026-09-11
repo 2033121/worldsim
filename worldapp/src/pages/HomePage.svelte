@@ -26,6 +26,17 @@
       accent: 'from-rose-500/15 to-red-500/5',
       sealCls: 'bg-rose-500/10 text-rose-700',
     },
+    {
+      address: 'game',
+      icon: '🎲',
+      seal: '玩',
+      title: '文字游戏',
+      tagline: '亲手下场 · 代码掷骰 · AI 叙事',
+      desc: '同一个世界直接玩起来：自由输入你的行动，d20 掷骰在代码层决定命运，AI 只裁决与叙述结果。',
+      features: ['do 行动 / say 说话 / story 叙事', 'd20 检定 + HP/等级/背包/任务', '等待回合世界自转 + 回血', '游戏存档 → 反向喂小说播种'],
+      accent: 'from-emerald-500/15 to-teal-500/5',
+      sealCls: 'bg-emerald-500/10 text-emerald-700',
+    },
   ];
 
   // 能力亮点（功能标签）

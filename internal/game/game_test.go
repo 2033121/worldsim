@@ -59,7 +59,7 @@ func TestClampAndLevelUp(t *testing.T) {
 func TestTurnPersistenceAndCheck(t *testing.T) {
 	dir := t.TempDir()
 	g := Load(dir)
-	if _, err := g.Start(context.Background(), nil, "测试界", "一个测试世界", "阿测", "普通青年"); err != nil {
+	if _, err := g.Start(context.Background(), nil, "测试界", "一个测试世界", "阿测", "普通青年", nil); err != nil {
 		t.Fatal(err)
 	}
 	verdict := `{"intent":"挥剑砍树","ability":"力量","dc":10,"hp_delta":-5,"gold_delta":10,"xp_delta":20,"inventory_add":["木柴"],"location":"","quest":"收集10根木柴","world_beat":"远处传来狼嚎"}`
@@ -94,7 +94,7 @@ func TestTurnPersistenceAndCheck(t *testing.T) {
 func TestWaitHeals(t *testing.T) {
 	dir := t.TempDir()
 	g := Load(dir)
-	_, _ = g.Start(context.Background(), nil, "界", "d", "主", "b")
+	_, _ = g.Start(context.Background(), nil, "界", "d", "主", "b", nil)
 	g.mu.Lock()
 	g.state.HP = 50
 	g.mu.Unlock()
@@ -110,10 +110,27 @@ func TestWaitHeals(t *testing.T) {
 	}
 }
 
+func TestStartWorldbookAttrsFallback(t *testing.T) {
+	dir := t.TempDir()
+	g := Load(dir)
+	_, err := g.Start(context.Background(), nil, "界", "d", "主", "b",
+		map[string]int{"炼气": 5, "体魄": 4, "道心": 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := g.StateCurrent()
+	if st.Attrs["炼气"] != 5 || st.Attrs["体魄"] != 4 || st.Attrs["道心"] != 3 {
+		t.Fatalf("worldbook attrs not applied: %v", st.Attrs)
+	}
+	if _, ok := st.Attrs["力量"]; ok {
+		t.Fatalf("generic fallback should be replaced by worldbook attrs: %v", st.Attrs)
+	}
+}
+
 func TestStopAndGuard(t *testing.T) {
 	dir := t.TempDir()
 	g := Load(dir)
-	_, _ = g.Start(context.Background(), nil, "界", "d", "主", "b")
+	_, _ = g.Start(context.Background(), nil, "界", "d", "主", "b", nil)
 	g.Stop()
 	if _, err := g.Turn(context.Background(), nil, 1, "走", "do", ""); err == nil {
 		t.Fatal("want error after stop")
