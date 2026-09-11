@@ -16,10 +16,39 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	art "worldsim/internal/art"
 	game "worldsim/internal/game"
 )
+
+// ---------- plan.json TTL 缓存（一次 status 最多触发 5 次 LoadPlan，重复读盘收口） ----------
+
+var planCacheMu sync.Mutex
+var planCache = map[string]planCacheEntry{}
+
+type planCacheEntry struct {
+	at   time.Time
+	plan *art.Plan
+}
+
+const planCacheTTL = 10 * time.Second
+
+// loadPlanCached 带 TTL 的 plan 读取（工坊改规划后最多延迟 10s 生效——渲染层可接受）
+func loadPlanCached(inst *worldInstance) *art.Plan {
+	if inst == nil {
+		return nil
+	}
+	planCacheMu.Lock()
+	defer planCacheMu.Unlock()
+	if e, ok := planCache[inst.dir]; ok && time.Since(e.at) < planCacheTTL {
+		return e.plan
+	}
+	plan, _ := art.LoadPlan(inst.dir)
+	planCache[inst.dir] = planCacheEntry{at: time.Now(), plan: plan}
+	return plan
+}
 
 // ---------- 素材名册（plan 优先，打包套件兜底） ----------
 
@@ -34,7 +63,7 @@ func assetRoster(inst *worldInstance, fileLabel string) ([]string, []string) {
 		return nil, nil
 	}
 	// plan 优先：本世界专属
-	if plan, err := art.LoadPlan(inst.dir); err == nil && plan != nil {
+	if plan := loadPlanCached(inst); plan != nil {
 		var names []PlanEntry
 		switch fileLabel {
 		case "character":
@@ -258,7 +287,7 @@ func mapLayout(inst *worldInstance, g *game.GameState) map[string]any {
 	}
 	// 2) plan kind 语义位 → tile 序号
 	kindTile := map[string]int{}
-	if plan, err := art.LoadPlan(inst.dir); err == nil && plan != nil {
+	if plan := loadPlanCached(inst); plan != nil {
 		for i, t := range plan.Tiles {
 			if t.Kind != "" {
 				if _, dup := kindTile[t.Kind]; !dup {

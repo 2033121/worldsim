@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -61,8 +62,6 @@ func (w *worldInstance) gameCtx(extra ...string) string {
 			if name == hero || ent.Status != "active" {
 				continue
 			}
-			role, _ := e.Extra["role"].(string)
-			_ = role
 			if e.Location != "" && ent.Location == e.Location {
 				present = append(present, name)
 			}
@@ -99,13 +98,12 @@ func (w *worldInstance) gameCtx(extra ...string) string {
 			w.wiSticky = map[string]int{}
 		}
 		if hits := worldbook.ActivateWI(w.wb.WIEntries, buf, w.wiSticky, 1200, 3); len(hits) > 0 {
-			fmt.Printf(" [游戏] WI 动态情报注入 %d 条：%s\n", len(hits), (func() string {
-				ks := []string{}
-				for _, e := range hits {
-					ks = append(ks, strings.Join(e.Keys, ","))
-				}
-				return strings.Join(ks, " / ")
-			})())
+			keys := []string{}
+			for _, e := range hits {
+				keys = append(keys, strings.Join(e.Keys, ","))
+			}
+			fmt.Printf(" [游戏] WI 动态情报注入 %d 条：%s\n", len(hits), strings.Join(keys, " / "))
+			w.wiLast.Store(append([]string(nil), keys...)) // 供 /api/game/status 透明化
 			b.WriteString("动态情报（按最近剧情关键词触发）：\n")
 			for _, e := range hits {
 				b.WriteString("- " + e.Content + "\n")
@@ -254,7 +252,69 @@ func (ws *worldServer) handleGameWait(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	syncGameToEngine(inst, g)
+	// 时钟同步（v1.10.0）：等待=世界自转一天，引擎 Day 推进+落盘——
+	// 游玩期间后台循环是暂停的，不同步则场景横幅 day%3 永不轮转（模拟器直接改 State 的同款模式）
+	if inst.engine != nil {
+		inst.engine.State().Day++
+		if err := inst.engine.Save(filepath.Join(inst.dir, "world_state.json")); err != nil {
+			fmt.Printf(" [游戏] 引擎日推进落盘失败：%v\n", err)
+		}
+	}
 	ws.writeJSON(w, 200, map[string]any{"ok": true, "narration": narr, "state": g.StateCurrent()})
+}
+
+// POST /api/game/undo — 撤销最近一步（回滚到上一回合落账前；单步）
+func (ws *worldServer) handleGameUndo(w http.ResponseWriter, r *http.Request) {
+	inst := ws.inst()
+	if inst == nil {
+		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": "没有可用世界"})
+		return
+	}
+	st, err := inst.lazyGame().Undo()
+	if err != nil {
+		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	syncGameToEngine(inst, inst.lazyGame())
+	ws.writeJSON(w, 200, map[string]any{"ok": true, "state": st})
+}
+
+// GET /api/game/export — 下载存档（game.json）
+func (ws *worldServer) handleGameExport(w http.ResponseWriter, r *http.Request) {
+	inst := ws.inst()
+	if inst == nil {
+		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": "没有可用世界"})
+		return
+	}
+	data, err := os.ReadFile(filepath.Join(inst.dir, game.GameStateFile))
+	if err != nil {
+		ws.writeJSON(w, 404, map[string]any{"ok": false, "error": "还没有存档（先开局）"})
+		return
+	}
+	name := urlEscape(inst.name)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename*=UTF-8''%s-game.json", name))
+	_, _ = w.Write(data)
+}
+
+// POST /api/game/import — 导入存档（body=game.json 原文；enabled 以存档为准）
+func (ws *worldServer) handleGameImport(w http.ResponseWriter, r *http.Request) {
+	inst := ws.inst()
+	if inst == nil {
+		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": "没有可用世界"})
+		return
+	}
+	data, err := io.ReadAll(io.LimitReader(r.Body, 4<<20))
+	if err != nil || len(data) == 0 {
+		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": "读取请求体失败"})
+		return
+	}
+	if err := inst.lazyGame().ImportFrom(data); err != nil {
+		ws.writeJSON(w, 400, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	syncGameToEngine(inst, inst.lazyGame())
+	ws.writeJSON(w, 200, map[string]any{"ok": true, "state": inst.lazyGame().StateCurrent()})
 }
 
 // POST /api/game/stop — 退出游玩模式
@@ -276,7 +336,13 @@ func (ws *worldServer) handleGameStatus(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	g := inst.lazyGame().StateCurrent()
-	resp := map[string]any{"ok": true, "game": g}
+	resp := map[string]any{"ok": true, "game": g, "world": inst.name}
+	// W1 动态情报透明化：最近回合命中的关键词组（玩家可感知 lore 触发）
+	if v := inst.wiLast.Load(); v != nil {
+		if hits, ok := v.([]string); ok && len(hits) > 0 {
+			resp["wi_hits"] = hits
+		}
+	}
 	// 美术工坊：本世界 plan.json 优先；无规划回落 detectPixelTheme 打包套件
 	if payload := artPixelPayload(inst); payload != nil {
 		resp["theme"] = payload["theme"]

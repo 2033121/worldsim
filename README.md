@@ -19,7 +19,8 @@
 - **多Agent世界模拟**：总导演(GM)/事件Agent/主角三问决策/感知分发/NPC互动/小说写手，各司其职
 - **文字游戏游玩模式（Play Mode）**：一手开世界，一手当玩家——自由输入（行动/说话/叙事三模式），**命运在骰子上**：代码层掷骰（d20+属性修正 vs 难度）+ 代码持有数值层（HP/等级/经验/背包/任务，`game.json` 落盘），LLM 只有两件事——把你的输入裁决成意图与难度、把既定结果讲成第二人称叙事；「等待」回合世界自转+休息回血；回合数值同步回引擎实体，游戏产物可反向喂小说播种；开局时后台模拟自动暂停，回合制不空转烧 token
 - **任意题材通用**：15个主题包（修仙/末世/西幻/克苏鲁/都市/星际/历史…）+ 通用世界书骨架 → 一句话创建新世界
-- **游玩页世界观感（v1.9.0）**：把美术工坊的素材真正长进游玩界面——晨/暮/夜场景横幅随世界时钟轮转、在场角色像素头像+好感度徽标（裁判申报、代码收数）、背包物品图标网格、**确定性地图视图**（地点→snake 网格+tile 语义渲染，LLM 不参与布局，逐格可复现）；世界书新增 `W1 动态条目`：`- 关键词 => 情报` 中文子串匹配+sticky 3 回合+1200 字预算，最近剧情提到就自动注入裁判/叙述者（借鉴 SillyTavern World Info 而为中文重造）；**世界卡** `GET /api/world/card` 一键打包你的世界书+美术+规划成 zip 分享，他人 `POST /api/worlds/import` 落地即玩
+- **游玩页世界观感（v1.9.0）**：把美术工坊的素材真正长进游玩界面——晨/暮/夜场景横幅随世界时钟轮转、在场角色像素头像+好感度徽标（裁判申报、代码收数）、背包物品图标网格、**确定性地图视图**（地点→snake 网格+tile 语义渲染，LLM 不参与布局，逐格可复现）；世界书新增 `W1 动态条目`：`- 关键词 => 情报` 中文子串匹配+sticky 3 回合+1200 字预算，最近剧情提到就自动注入裁判/叙述者并在游玩页显示命中的情报 chips（借鉴 SillyTavern World Info 而为中文重造）；**世界卡** `GET /api/world/card` 一键打包你的世界书+美术+规划成 zip 分享，他人 `POST /api/worlds/import` 落地即玩——控制台「🃏 世界卡」标签有导出/导入入口
+- **游玩手感（v1.10.0）**：**↩ 撤销上一步**（单步回滚数值/背包/好感/位置——后悔药在代码层，重启也能撤）；**倒下状态机**（HP 触底出红色警示横幅，等待回血恢复意识）；**💾 存档 / 📥 读档**（`GET /api/game/export` / `POST /api/game/import`，越界值自动收数）；d20 检定滚动动画、HP 条变色、输入历史 ↑/↓；等待回合会把世界时钟推进一天（场景横幅随游玩轮转）
 - **美术工坊（v1.8.0 内建图片生成）**：每个世界自己的像素美术——打开 `/studio` 配好图片服务，AI 先读你的世界书产出**素材规划**（12 人物 / 8 怪物 / 晨暮夜 3 场景 / 16 地图块 / 24 物品，每条带中文速写+英文提示词+世界专属调色板，可编辑），然后一键批量生成 sheet → **进程内自动裁剪抠底**成透明 sprite（空格自动单品补齐），产物直接接入游玩页自动换装；规划与每次生成全留痕（`art/plan.json` + `art/history.json`），单个人物不满意行内"重生成/重掷"；生成器可插拔（OpenAI images 中转站 / PixelLab 像素专用 API）
 - **时间尺度自适应**：修仙跳年、末世跳日、星际按标准时——LLM 从世界书自行判断，不硬编码
 - **就绪度驱动**：模拟不按天数结束，按"素材够不够写小说"（段落/戏剧素材/伏笔回收/张力）自动判定
@@ -123,8 +124,12 @@ curl -X POST localhost:48091/api/game/start
 curl -X POST localhost:48091/api/game/action \
   -H 'Content-Type: application/json' \
   -d '{"input":"检查剑胚是否可用","mode":"do"}'
-# 等待一回合（世界自转+休息回血）；浏览器直开 http://localhost:48091/game 有终端风游戏页
+# 等待一回合（世界自转+休息回血+世界时钟推进一天）；浏览器直开 http://localhost:48091/game 有终端风游戏页
 curl -X POST localhost:48091/api/game/wait
+# 后悔药：撤销上一步（数值/背包/好感回滚到该回合前）；存档带走/回灌
+curl -X POST localhost:48091/api/game/undo
+curl -o save.json localhost:48091/api/game/export
+curl -X POST localhost:48091/api/game/import -H 'Content-Type: application/json' --data-binary @save.json
 ```
 
 ## 📚 API 一览
@@ -137,7 +142,7 @@ curl -X POST localhost:48091/api/game/wait
 | 决策 | `GET /api/world/decisions` `POST /api/world/decisions/{id}` |
 | 时间回退 | `GET /api/world/snapshots` `POST /api/world/snapshot` `POST /api/world/rewind` |
 | 小说 | `POST /api/world/novel/generate` `GET /api/world/novel` `GET /api/world/novel/chapter/{num}` |
-| 文字游戏 | `GET /api/game/status` `POST /api/game/start` `POST /api/game/action` `POST /api/game/wait` `POST /api/game/stop` `GET /api/game/log`（UI：`GET /game`） |
+| 文字游戏 | `GET /api/game/status` `POST /api/game/start` `POST /api/game/action` `POST /api/game/wait` `POST /api/game/undo` `GET /api/game/export` `POST /api/game/import` `POST /api/game/stop` `GET /api/game/log`（UI：`GET /game`；世界卡：`GET /api/world/card` / `POST /api/worlds/import`） |
 | 主题包 | `GET /api/worldbooks/themes` |
 | 统计 | `GET /api/world/token_stats` `GET /api/world/sim/thinking` |
 

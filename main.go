@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	art "worldsim/internal/art"
@@ -196,6 +197,7 @@ type worldInstance struct {
 	game     *game.Game     // 文字游戏游玩会话（worlds/{世界名}/game.json）
 	gameOnce sync.Once      // 懒加载 game 会话
 	wiSticky map[string]int // W1 动态条目 sticky 状态（关键词命中后的跨回合保持）
+	wiLast   atomic.Value   // 最近一次 WI 命中 []string（供 /api/game/status 透明化展示）
 }
 
 func (w *worldInstance) ready() bool { return w != nil && w.engine != nil }
@@ -236,6 +238,9 @@ func startWorldServer(worldDir string, apiCfg *config.APIConfig, ra *research.Ag
 	mux.HandleFunc("POST /api/game/start", ws.handleGameStart)
 	mux.HandleFunc("POST /api/game/action", ws.handleGameAction)
 	mux.HandleFunc("POST /api/game/wait", ws.handleGameWait)
+	mux.HandleFunc("POST /api/game/undo", ws.handleGameUndo)
+	mux.HandleFunc("GET /api/game/export", ws.handleGameExport)
+	mux.HandleFunc("POST /api/game/import", ws.handleGameImport)
 	mux.HandleFunc("POST /api/game/stop", ws.handleGameStop)
 	mux.HandleFunc("GET /api/game/log", ws.handleGameLog)
 	mux.HandleFunc("GET /game", ws.handleGamePage)
@@ -306,24 +311,47 @@ func startWorldServer(worldDir string, apiCfg *config.APIConfig, ra *research.Ag
 	hc := health.New(filepath.Dir(ws.baseDir)) // ws.baseDir=worlds目录，日志写 wsdata（上级）
 	mux.HandleFunc("GET /api/health", hc.HandleHealth)
 
-	// WebUI 世界模拟面板（构建产物，embed 进二进制）
-	wsWebFS, subErr := fs.Sub(wsWeb, "wsweb")
-	if subErr != nil {
-		log.Fatalf("嵌入 wsweb 静态文件失败: %v", subErr)
-	}
-	_ = wsWebFS // 保留供后续扩展（当前用 embed 直接读 index.html）
-	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
+	// WebUI（v1.10.0）：48091 直出 uiteg 统一外壳——与 48092 网关同一前端，消除双控制台漂移。
+	// game.html / studio.html 仍走 /game /studio 专属路由（wsweb embed 未变）。
+	serveUiteg := func(w http.ResponseWriter, r *http.Request, path string) {
+		if path == "" {
+			path = "index.html"
+		}
+		if data, err := fs.ReadFile(uitegFS, "uiteg/"+path); err == nil {
+			ct := "text/html; charset=utf-8"
+			switch {
+			case strings.HasSuffix(path, ".js"):
+				ct = "text/javascript; charset=utf-8"
+			case strings.HasSuffix(path, ".css"):
+				ct = "text/css; charset=utf-8"
+			case strings.HasSuffix(path, ".png"):
+				ct = "image/png"
+			case strings.HasSuffix(path, ".svg"):
+				ct = "image/svg+xml"
+			case strings.HasSuffix(path, ".woff2"):
+				ct = "font/woff2"
+			case strings.HasSuffix(path, ".ico"):
+				ct = "image/x-icon"
+			}
+			if strings.Contains(path, "assets/") {
+				w.Header().Set("Cache-Control", "public, max-age=86400") // 指纹文件名可长缓存
+			}
+			w.Header().Set("Content-Type", ct)
+			_, _ = w.Write(data)
 			return
 		}
-		data, err := wsWeb.ReadFile("wsweb/index.html")
+		// 未知路径 → 外壳入口（应用内地址路由接管）
+		data, err := fs.ReadFile(uitegFS, "uiteg/index.html")
 		if err != nil {
 			http.Error(w, "前端加载失败", 500)
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write(data)
+		w.Header().Set("Cache-Control", "no-cache")
+		_, _ = w.Write(data)
+	}
+	mux.HandleFunc("GET /{path...}", func(w http.ResponseWriter, r *http.Request) {
+		serveUiteg(w, r, strings.TrimPrefix(r.URL.Path, "/")) // 根路径("")也在此处理
 	})
 
 	if err := http.ListenAndServe(listenHost()+worldPort, mux); err != nil {

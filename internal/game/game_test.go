@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // mockLLM 返回固定 JSON 的裁判（无叙述调用需求：第二个调用返回叙述文本）
@@ -181,5 +182,140 @@ func TestTurnRelations(t *testing.T) {
 	g2 := Load(dir)
 	if g2.StateCurrent().Relations["童恒"] != 10 {
 		t.Fatalf("relations not persisted: %v", g2.StateCurrent().Relations)
+	}
+}
+
+// ---------- v1.10.0 撤销 / 倒下 / 单飞 / 存档导入 ----------
+
+func TestUndoRestoresPrevTurn(t *testing.T) {
+	dir := t.TempDir()
+	g := Load(dir)
+	if _, err := g.Start(context.Background(), nil, "测试界", "测试", "阿测", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	verdict := `{"intent":"捡钱","ability":"","dc":0,"gold_delta":100,"inventory_add":["古玉"],"hp_delta":-20}`
+	if _, err := g.Turn(context.Background(), mockLLM(verdict), 2, "捡钱", "do", "无"); err != nil {
+		t.Fatal(err)
+	}
+	st := g.StateCurrent()
+	if st.Gold != 150 || st.HP != 80 || len(st.Inventory) != 3 {
+		t.Fatalf("pre-undo state wrong: gold=%d hp=%d inv=%v", st.Gold, st.HP, st.Inventory)
+	}
+	restored, err := g.Undo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Gold != 50 || restored.HP != 100 || len(restored.Inventory) != 2 {
+		t.Fatalf("undo not restored: %+v", restored)
+	}
+	if restored.Turn != 0 || len(restored.Log) != 1 {
+		t.Fatalf("undo log wrong: turn=%d log=%d", restored.Turn, len(restored.Log))
+	}
+	// 单步：再撤没有
+	if _, err := g.Undo(); err == nil {
+		t.Fatal("second undo should fail (single step)")
+	}
+	// 撤销后持久化一致
+	if Load(dir).StateCurrent().Gold != 50 {
+		t.Fatal("undo not persisted")
+	}
+}
+
+func TestDownedState(t *testing.T) {
+	dir := t.TempDir()
+	g := Load(dir)
+	if _, err := g.Start(context.Background(), nil, "测试界", "测试", "阿测", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	verdict := `{"intent":"硬冲尸群","ability":"","dc":0,"hp_delta":-130}`
+	if _, err := g.Turn(context.Background(), mockLLM(verdict), 2, "硬冲尸群", "do", "无"); err != nil {
+		t.Fatal(err)
+	}
+	st := g.StateCurrent()
+	if !st.Downed || st.HP != 0 {
+		t.Fatalf("want downed, got downed=%v hp=%d", st.Downed, st.HP)
+	}
+	// 等待回血 → 恢复意识
+	if _, err := g.Wait(context.Background(), nil, 2, "无"); err != nil {
+		t.Fatal(err)
+	}
+	st = g.StateCurrent()
+	if st.Downed || st.HP <= 0 {
+		t.Fatalf("wait should revive: downed=%v hp=%d", st.Downed, st.HP)
+	}
+}
+
+func TestSingleFlightTurn(t *testing.T) {
+	dir := t.TempDir()
+	g := Load(dir)
+	_, _ = g.Start(context.Background(), nil, "界", "d", "主", "b", nil)
+	release := make(chan struct{})
+	slow := Caller(func(ctx context.Context, tier, system, user string) (string, error) {
+		if strings.Contains(system, "叙述者") {
+			return "叙事完成。", nil
+		}
+		<-release // 裁判阶段挂起，制造并发窗口
+		return `{"intent":"x"}`, nil
+	})
+	done := make(chan error, 1)
+	go func() {
+		_, err := g.Turn(context.Background(), slow, 1, "第一回合", "do", "")
+		done <- err
+	}()
+	// 等 goroutine 真正占住单飞位
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		g.mu.Lock()
+		busy := g.turning
+		g.mu.Unlock()
+		if busy || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if _, err := g.Turn(context.Background(), nil, 1, "并发回合", "do", ""); err == nil || !strings.Contains(err.Error(), "回合进行中") {
+		t.Fatalf("want single-flight error, got %v", err)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("first turn failed: %v", err)
+	}
+}
+
+func TestImportFromValidates(t *testing.T) {
+	dir := t.TempDir()
+	g := Load(dir)
+	_, _ = g.Start(context.Background(), nil, "界", "d", "主", "b", nil)
+	// 非法 JSON
+	if err := g.ImportFrom([]byte("不是json")); err == nil {
+		t.Fatal("want error on bad json")
+	}
+	// 合法存档（含越界值 → clamp 收数）
+	save := `{"enabled":true,"turn":7,"attrs":{"力量":99},"hp":-8,"max_hp":120,"gold":5,"inventory":["剑"],"location":"北门","quest":"守城","relations":{"老王":55},"log":[]}`
+	if err := g.ImportFrom([]byte(save)); err != nil {
+		t.Fatal(err)
+	}
+	st := g.StateCurrent()
+	if st.Attrs["力量"] != 10 || st.Turn != 7 {
+		t.Fatalf("import clamp wrong: %v turn=%d", st.Attrs, st.Turn)
+	}
+	if st.Relations["老王"] != 10 {
+		t.Fatalf("relation clamp wrong: %v", st.Relations)
+	}
+	// 倒下状态机：HP 负值 → clamp 到 0 → Downed
+	if !st.Downed || st.HP != 0 {
+		t.Fatalf("downed state wrong: %v %d", st.Downed, st.HP)
+	}
+}
+
+func TestRollUnknownAbilityNoPenalty(t *testing.T) {
+	attrs := map[string]int{"力量": 10}
+	r := Roll(attrs, "神识", 10) // 面板没有的属性：无修正（不暗中 -5）
+	if r.Mod != 0 {
+		t.Fatalf("unknown ability should have mod 0, got %d", r.Mod)
+	}
+	r2 := Roll(attrs, "力量", 10)
+	if r2.Mod != 5 {
+		t.Fatalf("known ability mod wrong: %d", r2.Mod)
 	}
 }

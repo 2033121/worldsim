@@ -60,7 +60,10 @@ type GameState struct {
 	Location  string         `json:"location,omitempty"`
 	Quest     string         `json:"quest,omitempty"`
 	Relations map[string]int `json:"relations,omitempty"` // 好感度（-10..10，裁判申报、代码收数钳制）
+	Downed    bool           `json:"downed,omitempty"`    // 倒下（HP 0）：等待回血恢复或重开
 	Log       []TurnLog      `json:"log"`                 // 最近 200 条
+	// Prev 单步撤销快照（上一回合前的状态；不含日志与 prev 自身，避免体积膨胀）
+	Prev *GameState `json:"prev,omitempty"`
 }
 
 // 出生/兜底/上限常量
@@ -73,9 +76,35 @@ const (
 
 // Game 一个世界的游玩会话
 type Game struct {
-	mu    sync.Mutex
-	dir   string
-	state GameState
+	mu      sync.Mutex
+	dir     string
+	state   GameState
+	turning bool // 回合单飞标志（mu 保护）：LLM 期间不持锁，但同一世界不并发两回合
+}
+
+// cloneState 深拷贝（map/slice 独立；Prev 置空防递归膨胀）
+func cloneState(st GameState) GameState {
+	c := st
+	if st.Attrs != nil {
+		c.Attrs = make(map[string]int, len(st.Attrs))
+		for k, v := range st.Attrs {
+			c.Attrs[k] = v
+		}
+	}
+	if st.Relations != nil {
+		c.Relations = make(map[string]int, len(st.Relations))
+		for k, v := range st.Relations {
+			c.Relations[k] = v
+		}
+	}
+	if st.Inventory != nil {
+		c.Inventory = append([]string(nil), st.Inventory...)
+	}
+	if st.Log != nil {
+		c.Log = append([]TurnLog(nil), st.Log...)
+	}
+	c.Prev = nil
+	return c
 }
 
 // Load 从世界目录读取游戏状态（缺失/损坏 → 空会话）
@@ -118,9 +147,13 @@ func (g *Game) Stop() {
 	g.save()
 }
 
-// Roll 掷骰：d20 + 属性修正 vs DC（nat20 强成 / nat1 强败）
+// Roll 掷骰：d20 + 属性修正 vs DC（nat20 强成 / nat1 强败）。
+// 属性修正=值-5（属性域 1~10）；裁判点名了面板中不存在的属性按无修正处理（不暗中罚分）。
 func Roll(attrs map[string]int, ability string, dc int) CheckResult {
-	mod := attrs[ability] - 5 // 未注册属性按 0 → 修正-5（裁判只会点名现有 key）
+	mod := 0
+	if v, ok := attrs[ability]; ok {
+		mod = v - 5
+	}
 	d20 := 1 + rand.Intn(20)
 	res := CheckResult{Ability: ability, DC: dc, Roll: d20, Mod: mod}
 	switch {
@@ -134,8 +167,9 @@ func Roll(attrs map[string]int, ability string, dc int) CheckResult {
 	return res
 }
 
-// clamp 收数并返回过程附注（升级时满血）
+// clamp 收数并返回过程附注（升级时满血；HP 0=倒下，回血后自动恢复意识）
 func (st *GameState) clamp() string {
+	var notes []string
 	if st.MaxHP <= 0 {
 		st.MaxHP = 100
 	}
@@ -167,10 +201,18 @@ func (st *GameState) clamp() string {
 		st.HP = st.MaxHP
 		ups++
 	}
-	if ups == 0 {
-		return ""
+	if ups > 0 {
+		notes = append(notes, fmt.Sprintf("声望与实力获得认可：Level up → %d（满血）", st.Level))
 	}
-	return fmt.Sprintf("声望与实力获得认可：Level up → %d（满血）", st.Level)
+	// 倒下状态机：HP 触底 → 倒下；重新有血 → 恢复意识（等待回合回血可触发）
+	if st.HP <= 0 && !st.Downed {
+		st.Downed = true
+		notes = append(notes, "你倒下了（HP 0）——等待回合回血可恢复意识，或重新开始")
+	} else if st.Downed && st.HP > 0 {
+		st.Downed = false
+		notes = append(notes, "你恢复了意识（HP 已回升）")
+	}
+	return strings.Join(notes, "；")
 }
 
 // clampAttrs 收进 1~10（外观层：数值由数据/裁判给出，代码只保证合法域）
@@ -205,6 +247,10 @@ func zeroState() GameState {
 func (g *Game) Start(ctx context.Context, llm Caller, worldName, worldDesc, heroName, heroBrief string, worldAttrs map[string]int) (string, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if g.turning {
+		return "", fmt.Errorf("回合进行中，请稍后再重开")
+	}
+	// 注意：Start 会清空上一局（含撤销快照）——调用方 UI 应在已开局时先确认
 
 	sys := "你是文字游戏的初始化裁判。根据世界设定与主角档案，输出纯 JSON（无 markdown 代码块）：\n" +
 		`{"scene":"开场场景文字(第二人称,100-250字,写清此刻在哪/周围有什么/眼前正发生什么)",` +
@@ -306,30 +352,55 @@ const refereeSys = `你是文字游戏的裁判（数值层管理者，规则先
  "location":"若玩家移动，新地点名；否则空串",
  "quest":"任务/目标更新一句话，否则空串",
  "world_beat":"世界时钟推进：非玩家角色/环境在本回合发生了什么（1-2句，没有就空串）",
- "relations":[{"name":"本回合互动过的在场NPC名","delta":<-10~10的情绪变化，无互动则不传>}]}`
+ "relations":[{"name":"本回合互动过的在场NPC名","delta":<-10~10的情绪变化，无互动则不传>}]}
+纪律：玩家 HP 触底 0 会由代码判定为「倒下」（可等待恢复），你不要宣布死亡或跳过回合；
+玩家血量≤15% 时危机后果要真实（负伤、被迫撤退），但也给玩家留活路。`
 
 // Turn 一回合。ctxText=世界上下文包（main.go 拼装：主角引擎快照/在场NPC/最近叙事）。
+//
+// 并发纪律（v1.10.0）：单飞 + 短锁——
+//   - LLM 两次调用期间不持锁（此前整回合持锁会让 /api/game/status 最长挂 300s）；
+//   - turning 标志保证同一世界不并发两回合（第二个请求立即拿到明确错误）；
+//   - 撤销快照在开局即取（prev），失败/停止期间回合并入提交。
 func (g *Game) Turn(ctx context.Context, llm Caller, day int, input, mode, ctxText string) (string, error) {
+	// ---------- 短锁①：校验 + 单飞占位 + 回血（wait）+ 撤销快照 ----------
 	g.mu.Lock()
-	defer g.mu.Unlock()
 	if !g.state.Enabled {
+		g.mu.Unlock()
 		return "", fmt.Errorf("游戏未开启：先 POST /api/game/start")
+	}
+	if g.turning {
+		g.mu.Unlock()
+		return "", fmt.Errorf("回合进行中，请等当前回合结算")
+	}
+	g.turning = true
+	wait := mode == "wait"
+	if wait {
+		// 等待回合：先代码层回血（10% 上限），世界继续自转
+		if g.state.HP < g.state.MaxHP {
+			g.state.HP += g.state.MaxHP / 10
+			if g.state.HP > g.state.MaxHP {
+				g.state.HP = g.state.MaxHP
+			}
+		}
+		mode = "do"
+	} else if mode != "do" && mode != "say" && mode != "story" {
+		mode = "do"
 	}
 	input = strings.TrimSpace(input)
 	if input == "" {
 		input = "（原地等待，观察四周）"
 	}
-	if mode != "do" && mode != "say" && mode != "story" {
-		mode = "do"
-	}
-	g.state.Turn++
-	g.state.Mode = mode
+	prev := cloneState(g.state) // 撤销快照（回滚点=本回合落账前）
+	prev.Log = nil
+	work := cloneState(g.state)
+	g.mu.Unlock()
 
-	// ---------- 1. 裁判：意图 / 难度 / 申报变更 ----------
+	// ---------- 1. 裁判：意图 / 难度 / 申报变更（无锁调用 LLM） ----------
 	verdict := refereeOutput{Intent: input}
 	if llm != nil {
 		user := fmt.Sprintf("=== 玩家面板 ===\n%s\n=== 世界上下文 ===\n%s\n=== 玩家输入(mode=%s) ===\n%s",
-			sheetJSON(g.state), ctxText, mode, input)
+			sheetJSON(work), ctxText, mode, input)
 		if out, err := llm(ctx, "fast", refereeSys, user); err == nil {
 			if j := parseJSON(out); j != nil {
 				var v refereeOutput
@@ -343,28 +414,30 @@ func (g *Game) Turn(ctx context.Context, llm Caller, day int, input, mode, ctxTe
 	// ---------- 2. 代码掷骰（命运在骰子上，不在 prompt 里） ----------
 	var chk *CheckResult
 	if verdict.DC > 0 {
-		r := Roll(g.state.Attrs, verdict.Ability, verdict.DC)
+		r := Roll(work.Attrs, verdict.Ability, verdict.DC)
 		chk = &r
 	}
 
-	// ---------- 3. 落账（先扣后收，统一收数） ----------
-	g.state.HP += verdict.HPDelta
-	g.state.Gold += verdict.GoldDelta
-	g.state.XP += verdict.XPDelta
+	// ---------- 3. 落账（对工作副本先扣后收，统一收数） ----------
+	work.Turn++
+	work.Mode = mode
+	work.HP += verdict.HPDelta
+	work.Gold += verdict.GoldDelta
+	work.XP += verdict.XPDelta
 	for k, v := range verdict.AttrsDelta {
-		if g.state.Attrs == nil {
-			g.state.Attrs = map[string]int{}
+		if work.Attrs == nil {
+			work.Attrs = map[string]int{}
 		}
-		g.state.Attrs[k] += v
+		work.Attrs[k] += v
 	}
 	for _, it := range verdict.InventoryAdd {
 		if strings.TrimSpace(it) != "" {
-			g.state.Inventory = append(g.state.Inventory, it)
+			work.Inventory = append(work.Inventory, it)
 		}
 	}
 	if len(verdict.InventoryRemove) > 0 {
-		next := make([]string, 0, len(g.state.Inventory))
-		for _, it := range g.state.Inventory {
+		next := make([]string, 0, len(work.Inventory))
+		for _, it := range work.Inventory {
 			dropped := false
 			for _, rm := range verdict.InventoryRemove {
 				if it == rm {
@@ -376,13 +449,13 @@ func (g *Game) Turn(ctx context.Context, llm Caller, day int, input, mode, ctxTe
 				next = append(next, it)
 			}
 		}
-		g.state.Inventory = next
+		work.Inventory = next
 	}
 	if verdict.Location != "" {
-		g.state.Location = verdict.Location
+		work.Location = verdict.Location
 	}
 	if verdict.Quest != "" {
-		g.state.Quest = verdict.Quest
+		work.Quest = verdict.Quest
 	}
 	relNote := ""
 	for _, rd := range verdict.Relations {
@@ -390,22 +463,22 @@ func (g *Game) Turn(ctx context.Context, llm Caller, day int, input, mode, ctxTe
 		if name == "" {
 			continue
 		}
-		if g.state.Relations == nil {
-			g.state.Relations = map[string]int{}
+		if work.Relations == nil {
+			work.Relations = map[string]int{}
 		}
-		cur := g.state.Relations[name] + rd.Delta
+		cur := work.Relations[name] + rd.Delta
 		if cur > 10 {
 			cur = 10
 		}
 		if cur < -10 {
 			cur = -10
 		}
-		g.state.Relations[name] = cur
+		work.Relations[name] = cur
 		relNote += fmt.Sprintf("；好感度[%s]%+d→%d", name, rd.Delta, cur)
 	}
-	levelNote := g.state.clamp()
+	levelNote := work.clamp()
 
-	// ---------- 4. 叙述者：既定结果 → 第二人称叙事 ----------
+	// ---------- 4. 叙述者：既定结果 → 第二人称叙事（无锁调用 LLM） ----------
 	outcome := "免检定，顺利"
 	if chk != nil {
 		verdictWord := "失败"
@@ -426,9 +499,10 @@ func (g *Game) Turn(ctx context.Context, llm Caller, day int, input, mode, ctxTe
 	}
 	narrSys := "你是文字游戏的叙述者。把裁判的既定结果写成第二人称游戏叙事，90-220字：直接回应玩家输入；" +
 		"然后写世界反应（把 NPC/环境动态融进叙事或以「与此同时——」带出）；失败就写失败的代价；" +
-		"不许修改数值结果，不许替玩家做新决定，结尾不列选项（玩家自由输入）。纯文本，不要 JSON/markdown。"
+		"不许修改数值结果，不许替玩家做新决定，结尾不列选项（玩家自由输入）。纯文本，不要 JSON/markdown。" +
+		"若结算注明玩家已倒下，写出倒下的瞬间与周围反应（玩家仍可等待恢复或重开）。"
 	narrUser := fmt.Sprintf("玩家面板(含最近叙事)：%s\n检定：%s\n世界动态：%s\n数值结算：%s\n等级结算:%s\n玩家输入(mode=%s)：%s\n裁判意图:%s",
-		narrSheet(g.state), outcome, orDefault(verdict.WorldBeat, "无"), settle, orDefault(levelNote, "无"), mode, input, verdict.Intent)
+		narrSheet(work), outcome, orDefault(verdict.WorldBeat, "无"), settle, orDefault(levelNote, "无"), mode, input, verdict.Intent)
 	narr := ""
 	if llm != nil {
 		if out, err := llm(ctx, "normal", narrSys, narrUser); err == nil {
@@ -440,24 +514,86 @@ func (g *Game) Turn(ctx context.Context, llm Caller, day int, input, mode, ctxTe
 		if verdict.WorldBeat != "" {
 			narr += " 与此同时——" + verdict.WorldBeat
 		}
+		if levelNote != "" {
+			narr += "\n（" + levelNote + "）"
+		}
 	}
-	g.appendLog(TurnLog{Turn: g.state.Turn, Day: day, Input: input, Mode: mode, Narration: narr, Check: chk})
+
+	// ---------- 短锁②：提交（唯一出口；回合期间被 stop 则尊重退出丢弃回合） ----------
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.turning = false
+	if !g.state.Enabled {
+		return narr, nil
+	}
+	work.Prev = &prev
+	g.state = work
+	g.appendLog(TurnLog{Turn: work.Turn, Day: day, Input: input, Mode: mode, Narration: narr, Check: chk})
 	g.save()
 	return narr, nil
 }
 
-// Wait 等待回合：先代码层回血（10% 上限），再走正常回合管线（世界继续自转）。
-func (g *Game) Wait(ctx context.Context, llm Caller, day int, ctxText string) (string, error) {
+// Undo 撤销最近一步：状态恢复到上一回合落账前（数值/背包/好感/位置/倒下位全部回滚），
+// 日志去掉该回合记录。单步撤销——快照用完即弃，不链式回退。
+func (g *Game) Undo() (GameState, error) {
 	g.mu.Lock()
-	if g.state.Enabled && g.state.HP < g.state.MaxHP {
-		heal := g.state.MaxHP / 10
-		g.state.HP += heal
-		if g.state.HP > g.state.MaxHP {
-			g.state.HP = g.state.MaxHP
+	defer g.mu.Unlock()
+	if !g.state.Enabled {
+		return GameState{}, fmt.Errorf("游戏未开启")
+	}
+	if g.turning {
+		return GameState{}, fmt.Errorf("回合进行中，稍后再撤销")
+	}
+	if g.state.Prev == nil {
+		return GameState{}, fmt.Errorf("没有可撤销的回合")
+	}
+	restored := cloneState(*g.state.Prev)
+	if n := len(g.state.Log); n > 0 {
+		restored.Log = g.state.Log[:n-1]
+	} else {
+		restored.Log = nil
+	}
+	g.state = restored
+	g.save()
+	return g.state, nil
+}
+
+// ImportFrom 覆盖导入存档（校验+统一收数；enabled 以存档为准；撤销快照清空）。
+func (g *Game) ImportFrom(data []byte) error {
+	var st GameState
+	if err := json.Unmarshal(data, &st); err != nil {
+		return fmt.Errorf("不是合法的存档 JSON：%w", err)
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.turning {
+		return fmt.Errorf("回合进行中，稍后再导入")
+	}
+	if st.Turn < 0 {
+		st.Turn = 0
+	}
+	if len(st.Log) > maxLog {
+		st.Log = st.Log[len(st.Log)-maxLog:]
+	}
+	st.Attrs = clampAttrs(st.Attrs)
+	for k, v := range st.Relations { // 好感度合法域
+		if v > 10 {
+			st.Relations[k] = 10
+		} else if v < -10 {
+			st.Relations[k] = -10
 		}
 	}
-	g.mu.Unlock()
-	return g.Turn(ctx, llm, day+1, "（玩家选择等待/休息，观察世界按自己的节奏继续运转；留意窗口期与逼近的危机）", "do", ctxText)
+	st.Prev = nil
+	st.clamp() // HP/属性/等级合法域 + 倒下状态机
+	g.state = st
+	g.save()
+	return nil
+}
+
+// Wait 等待回合（世界自转+休息回血）：数值与单飞纪律统一走 Turn（mode=wait 触发回血）。
+func (g *Game) Wait(ctx context.Context, llm Caller, day int, ctxText string) (string, error) {
+	return g.Turn(ctx, llm, day+1,
+		"（玩家选择等待/休息，观察世界按自己的节奏继续运转；留意窗口期与逼近的危机）", "wait", ctxText)
 }
 
 // ---------- helpers ----------
@@ -507,6 +643,7 @@ func sheetJSON(st GameState) string {
 		"turn": st.Turn, "level": st.Level, "hp": st.HP, "max_hp": st.MaxHP,
 		"gold": st.Gold, "xp": st.XP, "attrs": st.Attrs,
 		"inventory": st.Inventory, "location": st.Location, "quest": st.Quest,
+		"downed": st.Downed,
 	})
 	return string(b)
 }
