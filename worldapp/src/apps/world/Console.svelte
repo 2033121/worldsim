@@ -19,6 +19,7 @@
   import EventsPanel from './components/EventsPanel.svelte';
   import ForeshadowsPanel from './components/ForeshadowsPanel.svelte';
   import SnapshotPanel from './components/SnapshotPanel.svelte';
+  import StudioPanel from './components/StudioPanel.svelte';
   import AttachPanel from './components/AttachPanel.svelte';
   import ResearchPanel from './components/ResearchPanel.svelte';
   import SelfHealPanel from './components/SelfHealPanel.svelte';
@@ -85,6 +86,7 @@
       <ControlPanel />
       <AttachPanel />
       <SnapshotPanel />
+      <StudioPanel />
       <WorldStatePanel />
       <GlobalEventsPanel />
     </aside>
@@ -100,6 +102,7 @@
           ['memory', '🧠', '记忆'],
           ['entities', '🧍', '实体'],
           ['worldbook', '📚', '世界书'],
+          ['art', '🎨', '美术工坊'],
           ['stats', '📊', '统计'],
           ['selfheal', '🛠️', '监测']
         ] as [id, icon, label]}
@@ -130,6 +133,10 @@
           <StatsPanel />
         {:else if $activeTab === 'selfheal'}
           <SelfHealPanel />
+        {:else if $activeTab === 'art'}
+          <div class="h-[70vh] rounded-xl border border-base-content/10 overflow-hidden">
+            <iframe src="/studio" class="w-full h-full" title="美术工坊"></iframe>
+          </div>
         {/if}
       </div>
     </main>

@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WorldSim · 美术工坊</title>
+<style>
+:root{--bg:#0d1117;--panel:#161b22;--ink:#c9d1d9;--dim:#8b949e;--acc:#58a6ff;--ok:#3fb950;--bad:#f85149;--gold:#e3b341}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"JetBrains Mono","Noto Sans SC",monospace,system-ui;min-height:100vh}
+header{padding:10px 16px;background:var(--panel);border-bottom:1px solid #30363d;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+header h1{font-size:15px;margin:0;color:var(--acc)}
+header .spacer{flex:1}
+.chip{background:#0d1117;border:1px solid #30363d;border-radius:14px;padding:3px 10px;font-size:12px}
+.chip b{color:var(--acc)}
+.chip.ok{border-color:var(--ok)} .chip.bad{border-color:var(--bad)}
+button{background:#21262d;color:var(--ink);border:1px solid #30363d;border-radius:6px;padding:6px 14px;cursor:pointer;font-size:13px}
+button:hover{border-color:var(--acc);color:var(--acc)}
+button:disabled{opacity:.5;cursor:not-allowed}
+button.primary{border-color:var(--acc);color:var(--acc);background:#0d2136}
+main{flex:1;padding:16px;max-width:1100px;width:100%;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+.card{background:var(--panel);border:1px solid #30363d;border-radius:10px;padding:14px 16px}
+.card h2{font-size:13px;margin:0 0 10px;color:var(--gold);letter-spacing:1px}
+.card .hint{color:var(--dim);font-size:12px;margin-top:8px;line-height:1.6}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
+label{font-size:12px;color:var(--dim);display:flex;flex-direction:column;gap:4px;min-width:120px}
+label.wide{flex:1;min-width:240px}
+input,select,textarea{background:#0d1117;border:1px solid #30363d;border-radius:6px;color:var(--ink);padding:7px 10px;font:inherit;font-size:13px;outline:none}
+input:focus,select:focus,textarea:focus{border-color:var(--acc)}
+textarea{width:100%;resize:vertical;line-height:1.5}
+.status{font-size:12px;color:var(--dim)}
+.status.ok{color:var(--ok)} .status.bad{color:var(--bad)}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.tabs button{padding:4px 12px;border-radius:14px;font-size:12px}
+.tabs button.active{border-color:var(--gold);color:var(--gold)}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{border-bottom:1px solid #21262d;padding:6px 6px;text-align:left;vertical-align:top}
+th{color:var(--dim);font-weight:400}
+td input{width:100%;padding:4px 8px;font-size:12px}
+td.name{width:130px} td.idx{width:34px;color:var(--dim)}
+td.act{width:70px;white-space:nowrap}
+.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px}
+.gitem{background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:8px;text-align:center}
+.gitem img{width:100%;height:110px;object-fit:contain;image-rendering:pixelated;background:#181f27;border-radius:6px}
+.gitem .cap{font-size:11px;color:var(--dim);margin-top:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gitem img.missing{opacity:.15}
+.jobbar{height:8px;background:#21262d;border-radius:4px;overflow:hidden;margin:8px 0}
+.jobbar span{display:block;height:100%;background:linear-gradient(90deg,var(--acc),var(--ok));transition:width .4s}
+a{color:var(--dim);font-size:13px;text-decoration:none}
+a:hover{color:var(--acc)}
+</style>
+</head>
+<body>
+<header>
+  <h1>🎨 WorldSim · 美术工坊</h1>
+  <span class="chip" id="worldChip">世界：—</span>
+  <span class="chip" id="stateChip">服务：—</span>
+  <span class="spacer"></span>
+  <a href="/">← 控制台</a>
+  <a href="/game">文字游戏 →</a>
+</header>
+<main>
+  <!-- ① 服务配置 -->
+  <div class="card" id="cardConfig">
+    <h2>① 图片生成服务</h2>
+    <div class="row">
+      <label>Provider
+        <select id="cfgProvider">
+          <option value="openai_images">openai_images（中转站）</option>
+          <option value="pixellab">pixellab（像素专用 API）</option>
+        </select>
+      </label>
+      <label class="wide">Base URL
+        <input id="cfgBase" placeholder="http://ai.jiuqingyunapi.top">
+      </label>
+      <label>模型 <input id="cfgModel" placeholder="gpt-image-2"></label>
+      <label>尺寸 <input id="cfgSize" placeholder="1536x1024"></label>
+    </div>
+    <div class="row">
+      <label class="wide">API Key（留空保留旧值）
+        <input id="cfgKey" type="password" placeholder="sk-…（或设环境变量 GPTIMG_KEY）">
+      </label>
+      <label>Key 环境变量 <input id="cfgKeyEnv" placeholder="GPTIMG_KEY"></label>
+      <label>超时(秒) <input id="cfgTimeout" type="number" min="30" max="900"></label>
+    </div>
+    <div class="row">
+      <button class="primary" id="btnSaveCfg">保存配置</button>
+      <button id="btnTestCfg">测试连通（64x64）</button>
+      <span class="status" id="cfgStatus"></span>
+    </div>
+    <div class="hint">密钥只保存在程序数据目录 img.json 或环境变量，不进仓库、不回显明文。</div>
+  </div>
+
+  <!-- ② 素材规划 -->
+  <div class="card" id="cardPlan">
+    <h2>② 素材规划（世界书 → 提示词）</h2>
+    <div class="row">
+      <button class="primary" id="btnPlanGen">📜 从世界书生成规划（12 人物 / 8 怪物 / 3 场景 / 16 地图块 / 24 物品）</button>
+      <button id="btnPlanSave">保存规划修改</button>
+      <span class="status" id="planStatus"></span>
+    </div>
+    <div class="hint" id="planInfo" style="margin-bottom:10px"></div>
+    <div class="tabs" id="planTabs"></div>
+    <div id="planTable"></div>
+  </div>
+
+  <!-- ③ 生成 -->
+  <div class="card" id="cardGen">
+    <h2>③ 生成图片</h2>
+    <div class="row">
+      <button class="primary" id="btnGenAll">⚡ 全部生成（5 张 sheet ≈ 5 次请求）</button>
+      <button data-asset="characters">人物</button>
+      <button data-asset="monsters">怪物</button>
+      <button data-asset="scenes">场景</button>
+      <button data-asset="maptiles">地图块</button>
+      <button data-asset="items">物品</button>
+      <span class="status" id="genStatus"></span>
+    </div>
+    <div class="jobbar"><span id="jobBar" style="width:0%"></span></div>
+    <div class="status" id="jobDetail"></div>
+  </div>
+
+  <!-- ④ 素材库 -->
+  <div class="card" id="cardAssets">
+    <h2>④ 素材库（自动接入游玩页）</h2>
+    <div class="tabs" id="assetTabs"></div>
+    <div class="gallery" id="assetGallery"></div>
+    <div class="hint">生成完成后打开 /game 或统一外壳「文字游戏」页即自动换装为本世界素材；单品失败可用规划表里的"重生成"修补。</div>
+  </div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const LABELS={characters:'人物',monsters:'怪物',scenes:'场景',maptiles:'地图块',items:'物品'};
+const KEYS={characters:'characters',monsters:'monsters',scenes:'scenes',maptiles:'tiles',items:'items'};
+let PLAN=null,CUR_TAB='characters',CUR_ASSET_TAB='characters';
+
+async function jfetch(url,opts){const r=await fetch(url,opts);const j=await r.json().catch(()=>({ok:false,error:'非 JSON 响应'}));if(!r.ok&&!j.error)j.error='HTTP '+r.status;return j;}
+function status(el,msg,cls){el.textContent=msg||'';el.className='status'+(cls?' '+cls:'');}
+
+async function loadWorld(){const r=await fetch('/api/game/status').then(x=>x.json()).catch(()=>null);if(r){$('worldChip').textContent='世界：'+(r.world||'—');}else{$('worldChip').textContent='世界：—（先在控制台创建/选择世界）';}}
+
+async function loadConfig(){
+  const j=await jfetch('/api/art/config');
+  if(!j.ok)return;
+  const c=j.config;
+  $('cfgProvider').value=c.provider||'openai_images';
+  $('cfgBase').value=c.base_url||'';
+  $('cfgModel').value=c.model||'';
+  $('cfgSize').value=c.size||'';
+  $('cfgKeyEnv').value=c.api_key_env||'';
+  $('cfgTimeout').value=c.timeout_seconds||300;
+  $('stateChip').textContent='服务：'+(j.enabled?'已配置':'未配置');
+  $('stateChip').className='chip'+(j.enabled?' ok':' bad');
+}
+
+$('btnSaveCfg').onclick=async()=>{
+  status($('cfgStatus'),'保存中…');
+  const body={provider:$('cfgProvider').value,base_url:$('cfgBase').value.trim(),model:$('cfgModel').value.trim(),size:$('cfgSize').value.trim(),api_key_env:$('cfgKeyEnv').value.trim(),timeout_seconds:+$('cfgTimeout').value||300};
+  const key=$('cfgKey').value.trim();if(key)body.api_key=key;
+  const j=await jfetch('/api/art/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(j.ok){status($('cfgStatus'),'已保存，服务'+(j.enabled?'已启用':'未启用（缺 key 或 base_url）'),j.enabled?'ok':'bad');loadConfig();}
+  else status($('cfgStatus'),j.error||'保存失败','bad');
+};
+$('btnTestCfg').onclick=async()=>{
+  status($('cfgStatus'),'试生成中（约 10~60 秒）…');
+  const j=await jfetch('/api/art/config/test',{method:'POST'});
+  if(j.ok)status($('cfgStatus'),'连通正常，返回 '+j.bytes+' 字节','ok');
+  else status($('cfgStatus'),j.error||'失败','bad');
+};
+
+// ---------- 规划 ----------
+const PLAN_SECTIONS=[['characters','人物'],['monsters','怪物'],['scenes','场景'],['maptiles','地图块'],['items','物品']];
+function planList(tab){
+  if(!PLAN)return[];
+  return PLAN[KEYS[tab]]||[];
+}
+function renderTabs(){
+  $('planTabs').innerHTML=PLAN_SECTIONS.map(([k,z])=>`<button class="${k===CUR_TAB?'active':''}" data-tab="${k}">${z}</button>`).join('');
+  $('planTabs').querySelectorAll('button').forEach(b=>b.onclick=()=>{CUR_TAB=b.dataset.tab;renderTabs();renderPlanTable();});
+}
+function renderPlanTable(){
+  const list=planList(CUR_TAB);
+  if(!PLAN||!list.length){$('planTable').innerHTML='<div class="hint">尚无规划。点上方"从世界书生成规划"（LLM 一次调用，约 1~3 分钟）。</div>';return;}
+  const isScene=CUR_TAB==='scenes';
+  let html='<table><tr><th class="idx">#</th><th class="name">名称</th><th style="width:26%">外观速写（可改）</th><th>英文提示词（可改）</th><th class="act"></th></tr>';
+  list.forEach((a,i)=>{
+    html+=`<tr><td class="idx">${i+1}</td><td class="name"><input data-f="name" data-i="${i}" value="${esc(a.Name||a.name||'')}"></td>`
+      +`<td><input data-f="look" data-i="${i}" value="${esc(a.Look||a.look||'')}"></td>`
+      +`<td><textarea data-f="prompt" data-i="${i}" rows="2">${esc(a.Prompt||a.prompt||'')}</textarea></td>`
+      +`<td class="act"><button data-regen="${i}">重生成</button></td></tr>`;
+  });
+  $('planTable').innerHTML=html+'</table>';
+  $('planTable').querySelectorAll('[data-f]').forEach(inp=>inp.onchange=()=>{
+    planList(CUR_TAB)[+inp.dataset.i][inp.dataset.f]=inp.value;
+  });
+  $('planTable').querySelectorAll('[data-f]'); // name field uses data-f absent → handle below
+  $('planTable').querySelectorAll('input[data-f="name"], td.name input').forEach(inp=>inp.onchange=()=>{planList(CUR_TAB)[+inp.dataset.i].Name=inp.value;});
+  $('planTable').querySelectorAll('[data-regen]').forEach(b=>b.onclick=()=>regenOne(+b.dataset.regen));
+}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');}
+
+$('btnPlanGen').onclick=async()=>{
+  status($('planStatus'),'规划生成中（LLM 一次调用，1~3 分钟，完成后自动落盘）…');
+  await jfetch('/api/art/plan',{method:'POST'});
+  let tries=0;
+  const timer=setInterval(async()=>{
+    tries++;
+    const j=await jfetch('/api/art/plan');
+    if(j.ok&&j.plan){clearInterval(timer);PLAN=j.plan;CUR_TAB='characters';renderTabs();renderPlanTable();status($('planStatus'),'规划已就绪（theme: '+PLAN.theme+'）','ok');$('planInfo').textContent='调色板：'+(PLAN.palette||'—');loadAssets();}
+    else if(tries>90){clearInterval(timer);status($('planStatus'),'规划超时/失败，可重试','bad');}
+  },3000);
+};
+$('btnPlanSave').onclick=async()=>{
+  if(!PLAN)return status($('planStatus'),'无规划可保存','bad');
+  const j=await jfetch('/api/art/plan',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(PLAN)});
+  if(j.ok){
+    let msg='已保存';if(j.warns&&j.warns.length)msg+='，'+j.warns.length+' 条缺提示词';
+    status($('planStatus'),msg,j.warns&&j.warns.length?'bad':'ok');
+  } else status($('planStatus'),j.error||'保存失败','bad');
+};
+async function regenOne(i){
+  if(!PLAN)return;
+  const label=CUR_TAB==='maptiles'?'tile':CUR_TAB.replace(/s$/,'').replace('character','character').replace('monter','monster');
+  const labelMap={characters:'character',monsters:'monster',scenes:'scene',maptiles:'tile',items:'item'};
+  status($('planStatus'),'单品重生成中…');
+  const j=await jfetch('/api/art/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({label:labelMap[CUR_TAB],index:i+1})});
+  if(j.ok)pollJob(j.job.id,()=>{status($('planStatus'),'单品已更新','ok');loadAssets();});
+  else status($('planStatus'),j.error||'失败','bad');
+}
+
+// ---------- 生成 ----------
+async function genBatch(assets){
+  status($('genStatus'),'提交中…');
+  const j=await jfetch('/api/art/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({assets})});
+  if(!j.ok)return status($('genStatus'),j.error||'提交失败','bad');
+  status($('genStatus'),'生成中…（每张 sheet 约 40~60 秒）');
+  pollJob(j.job.id,()=>{status($('genStatus'),'完成','ok');loadAssets();});
+}
+$('btnGenAll').onclick=()=>genBatch([]);
+document.querySelectorAll('[data-asset]').forEach(b=>b.onclick=()=>genBatch([b.dataset.asset]));
+
+function pollJob(id,done){
+  const timer=setInterval(async()=>{
+    const j=await jfetch('/api/art/jobs/'+id);
+    if(!j.ok){clearInterval(timer);return;}
+    const job=j.job;
+    const total=job.steps.length||1;
+    const doneN=job.steps.filter(s=>s.status==='done'||s.status==='failed'||s.status==='skipped').length;
+    $('jobBar').style.width=(doneN/total*100)+'%';
+    $('jobDetail').textContent=job.steps.map(s=>LABELS[s.label]+'：'+({done:'✔',failed:'✘ '+s.error,running:'…',skipped:'→'})[s.status]).join('　');
+    if(job.status==='done'||job.status==='failed'){clearInterval(timer);$('jobBar').style.width='100%';if(done)done(job);}
+  },4000);
+}
+
+// ---------- 素材库 ----------
+function renderAssetTabs(){
+  $('assetTabs').innerHTML=PLAN_SECTIONS.map(([k,z])=>`<button class="${k===CUR_ASSET_TAB?'active':''}" data-tab="${k}">${z}</button>`).join('');
+  $('assetTabs').querySelectorAll('button').forEach(b=>b.onclick=()=>{CUR_ASSET_TAB=b.dataset.tab;renderAssetTabs();loadAssetGallery();});
+}
+async function loadAssets(){await loadAssetGallery();}
+async function loadAssetGallery(){
+  const j=await jfetch('/api/art/assets');
+  if(!j.ok)return;
+  const cur=j.assets[CUR_ASSET_TAB];
+  if(!cur)return;
+  $('assetGallery').innerHTML=cur.sprites.map(s=>
+    `<div class="gitem"><img class="${s.exists?'':'missing'}" src="${s.url}?t=${Date.now()}" loading="lazy"><div class="cap">${s.exists?'':'（未生成）'}${s.url.split('/').pop()}</div></div>`
+  ).join('');
+}
+
+renderTabs();renderAssetTabs();
+loadWorld();loadConfig();
+// 启动时若已有规划直接载入
+jfetch('/api/art/plan').then(j=>{if(j.ok&&j.plan){PLAN=j.plan;renderTabs();renderPlanTable();$('planInfo').textContent='调色板：'+(PLAN.palette||'—');}});
+loadAssetGallery();
+setInterval(()=>{loadWorld();},20000);
+</script>
+</body>
+</html>

@@ -19,6 +19,7 @@
 - **多Agent世界模拟**：总导演(GM)/事件Agent/主角三问决策/感知分发/NPC互动/小说写手，各司其职
 - **文字游戏游玩模式（Play Mode）**：一手开世界，一手当玩家——自由输入（行动/说话/叙事三模式），**命运在骰子上**：代码层掷骰（d20+属性修正 vs 难度）+ 代码持有数值层（HP/等级/经验/背包/任务，`game.json` 落盘），LLM 只有两件事——把你的输入裁决成意图与难度、把既定结果讲成第二人称叙事；「等待」回合世界自转+休息回血；回合数值同步回引擎实体，游戏产物可反向喂小说播种；开局时后台模拟自动暂停，回合制不空转烧 token
 - **任意题材通用**：15个主题包（修仙/末世/西幻/克苏鲁/都市/星际/历史…）+ 通用世界书骨架 → 一句话创建新世界
+- **美术工坊（v1.8.0 内建图片生成）**：每个世界自己的像素美术——打开 `/studio` 配好图片服务，AI 先读你的世界书产出**素材规划**（12 人物 / 8 怪物 / 晨暮夜 3 场景 / 16 地图块 / 24 物品，每条带中文速写+英文提示词+世界专属调色板，可编辑），然后一键批量生成 sheet → **进程内自动裁剪抠底**成透明 sprite（空格自动单品补齐），产物直接接入游玩页自动换装；规划与每次生成全留痕（`art/plan.json` + `art/history.json`），单个人物不满意行内"重生成/重掷"；生成器可插拔（OpenAI images 中转站 / PixelLab 像素专用 API）
 - **时间尺度自适应**：修仙跳年、末世跳日、星际按标准时——LLM 从世界书自行判断，不硬编码
 - **就绪度驱动**：模拟不按天数结束，按"素材够不够写小说"（段落/戏剧素材/伏笔回收/张力）自动判定
 - **岔口决策队列**：剧情多方向岔口 AI 自动代决（零阻塞），用户可随时翻案，写手按用户方向写
@@ -178,6 +179,8 @@ _均由 gpt-image-2 按本仓库主题生成（水墨卷轴风，图内零文字
 | 经典修仙 | 末世废土 | 西幻奇幻 | 克苏鲁异界 | 星际科幻 |
 |---|---|---|---|---|
 | ![](docs/art/pixel/xianxia/sprites/contact-sheet.png) | ![](docs/art/pixel/apocalypse/sprites/contact-sheet.png) | ![](docs/art/pixel/western/sprites/contact-sheet.png) | ![](docs/art/pixel/cosmic/sprites/contact-sheet.png) | ![](docs/art/pixel/interstellar/sprites/contact-sheet.png) |
+
+**每个世界还可以有自己的美术**：v1.8.0「美术工坊」（`GET /studio` + `internal/art`）让 AI 按你的世界书产出素材规划并生成专属像素套件，游玩页优先使用本世界素材（`/art/{file}.png`），无规划时回落下方打包套件。
 
 **游玩页已自动接线**：`/api/game/status` 依据世界书题材返回 `theme` + 主题匹配的 sprite 列表，游玩页按世界主题自动换装（人物立绘/检定失败出怪物图），资产经 `GET /pixel-art/{theme}/{file}.png` 直出（磁盘 `docs/art/pixel/` 优先，量化压缩后全库仅 ~22MB）。sheet 生成 `scripts/gen_pixel_suite.py` + manifest 裁剪 `scripts/crop_grid.py`（4x3 人物 / 4x2 怪物 / 三联场景 / 4x4 tile 整格 / 6x4 物品）。
 

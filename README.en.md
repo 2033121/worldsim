@@ -67,6 +67,8 @@ documents collaboration conventions.
 
 [Play Mode banner](docs/art/play-mode.png) — a jade d20 on a lantern-lit journal; the text-game face of the same engine.
 
+**Art Studio (v1.8.0, built-in image generation)** — give every world its own pixel art. Open `/studio`, configure an image provider (OpenAI-images relay or PixelLab), and the planner AI reads your worldbook to produce an **asset plan**: 12 characters / 8 monsters / morning-dusk-night scenes / 16 map tiles / 24 items, each with a Chinese look sketch + an English prompt + a world-specific locked palette (editable in UI). One click batch-generates 5 sheets; the server then crops, flood-fill-removes the background and auto-heals empty cells in-process, delivering transparent sprites straight into the play page (`/art/{file}.png` takes priority, bundled suites are the fallback). Every generation is recorded in `art/history.json` for re-rolls.
+
 Also ships a 20-character transparent pixel-sprite pack (agents / xianxia / apocalypse / western / sci-fi crews) under [`docs/art/pixel-sprites/`](docs/art/pixel-sprites/contact-sheet.png).
 
 ## Downloads

@@ -40,6 +40,27 @@ func startUnifiedEntry() {
 			req.Host = req.URL.Host
 		},
 	})
+	mux.Handle("/art", &httputil.ReverseProxy{
+		Director: func(req *http.Request) {
+			req.URL.Scheme = worldTarget.Scheme
+			req.URL.Host = worldTarget.Host
+			req.Host = req.URL.Host
+		},
+	})
+	mux.Handle("/art/", &httputil.ReverseProxy{
+		Director: func(req *http.Request) {
+			req.URL.Scheme = worldTarget.Scheme
+			req.URL.Host = worldTarget.Host
+			req.Host = req.URL.Host
+		},
+	})
+	mux.Handle("/studio", &httputil.ReverseProxy{
+		Director: func(req *http.Request) {
+			req.URL.Scheme = worldTarget.Scheme
+			req.URL.Host = worldTarget.Host
+			req.Host = req.URL.Host
+		},
+	})
 	mux.Handle("/game", &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
 			req.URL.Scheme = worldTarget.Scheme

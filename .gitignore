@@ -1,5 +1,6 @@
 # ===== 安全：绝不提交密钥 =====
 api.json
+img.json
 *.key
 *.pem
 .env

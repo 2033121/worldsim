@@ -39,6 +39,7 @@ import (
 	"worldsim/internal/selfheal"
 	"worldsim/internal/sim"
 	"worldsim/internal/sse"
+	art "worldsim/internal/art"
 	"worldsim/internal/worldbook"
 )
 
@@ -239,6 +240,21 @@ func startWorldServer(worldDir string, apiCfg *config.APIConfig, ra *research.Ag
 	mux.HandleFunc("GET /game", ws.handleGamePage)
 	mux.HandleFunc("GET /pixel-art/{theme}/{file}", ws.handlePixelArt)
 
+	// 美术工坊：世界书驱动的像素素材生成（v1.8.0）
+	mux.HandleFunc("GET /art/{file}", ws.handleArtFile)
+	mux.HandleFunc("GET /studio", ws.handleStudioPage)
+	mux.HandleFunc("GET /api/art/config", ws.handleArtConfigGet)
+	mux.HandleFunc("POST /api/art/config", ws.handleArtConfigSet)
+	mux.HandleFunc("POST /api/art/config/test", ws.handleArtConfigTest)
+	mux.HandleFunc("POST /api/art/plan", ws.handleArtPlanGenerate)
+	mux.HandleFunc("GET /api/art/plan", ws.handleArtPlanGet)
+	mux.HandleFunc("PUT /api/art/plan", ws.handleArtPlanSet)
+	mux.HandleFunc("POST /api/art/generate", ws.handleArtGenerate)
+	mux.HandleFunc("GET /api/art/jobs/{id}", ws.handleArtJobs)
+	mux.HandleFunc("GET /api/art/jobs", ws.handleArtJobs)
+	mux.HandleFunc("GET /api/art/assets", ws.handleArtAssets)
+	mux.HandleFunc("GET /api/art/history", ws.handleArtHistory)
+
 	// 世界参考资料附件：上传 / 列表 / 删除
 	mux.HandleFunc("POST /api/world/attach/upload", ws.handleAttachUpload)
 	mux.HandleFunc("GET /api/world/attach", ws.handleAttachList)
@@ -318,6 +334,9 @@ type worldServer struct {
 	apiCfg   *config.APIConfig
 	research *research.Agent // 题材研究智能体（热门题材研究/主题规划/世界书方向产出）
 	novelMu  sync.Mutex      // 小说生成防重入锁（并发请求会写重复章号）
+
+	artManager     *art.Manager   // 美术工坊任务管理器（全局一个，懒加载）
+	artOnce        sync.Once
 
 	loopMu         sync.Mutex // 后台持续运行控制
 	loopRunning    bool       // 循环是否在跑

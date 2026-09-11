@@ -242,7 +242,11 @@ func (ws *worldServer) handleGameStatus(w http.ResponseWriter, r *http.Request) 
 	}
 	g := inst.lazyGame().StateCurrent()
 	resp := map[string]any{"ok": true, "game": g}
-	if theme := detectPixelTheme(inst); theme != "" {
+	// 美术工坊：本世界 plan.json 优先；无规划回落 detectPixelTheme 打包套件
+	if payload := artPixelPayload(inst); payload != nil {
+		resp["theme"] = payload["theme"]
+		resp["pixel"] = payload
+	} else if theme := detectPixelTheme(inst); theme != "" {
 		resp["theme"] = theme
 		sp := map[string]string{"hero": "/pixel-art/" + theme + "/character-1.png",
 			"monster": "/pixel-art/" + theme + "/monster-1.png"}

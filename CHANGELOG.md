@@ -2,6 +2,23 @@
 
 本项目所有重要变更都记录在此。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [1.8.0] - 2026-09-12
+
+### ✨ 新增（美术工坊：世界书驱动的内建图片生成）
+- **新包 `internal/art`**（零第三方依赖）：
+  - **可插拔生成客户端** `imagegen.go`：OpenAI images 协议（中转站 gpt-image-2，UA 伪装头实测必需）+ PixelLab Pixflux 预留适配（noBackground 直出透明底）；退避重试 1s/3s/9s；配置存程序数据目录 `img.json`（key 只写不读、API 永远掩码回显，仓库零密钥）
+  - **素材规划 Agent** `plan.go`：LLM 读世界书（A1-A4/A6/A7/B5 摘要 + 可选「美术设定」段 + 引擎实体名单）→ `art/plan.json`——12 人物 / 8 怪物 / 3 场景（晨暮夜）/ 16 地图块 / 24 物品，每条含名称/角色/中文外观速写/英文提示词；风格契约（16-bit 像素/厚描边/统一 #e8e8e8 底/禁文字）与调色板（含 palette_hex 色值）由代码层注入每条 prompt
+  - **Go 原生裁剪管线** `crop.go`：sheet 网格切分 → 非背景紧致 bbox → 边缘 BFS 洪泛抠底（与 scripts/crop_grid.py 同构，stdlib image/png 实现）；tile 整格不抠底；空格占比校验
+  - **任务编排** `jobs.go`：批量生成（每类 1 张 sheet，断点续跑）+ **单品重生成**（改某条 prompt 只出 1 图 1024x1024）+ 空格自动单品补齐 + `art/history.json` 生成留痕（追溯/重掷）
+- **HTTP API**（48091，网关 48092 自动转发）：`GET/POST /api/art/config`（key 掩码）+ `POST /api/art/config/test` 连通试生成、`POST/GET/PUT /api/art/plan`、`POST /api/art/generate`（批量/单品，异步）、`GET /api/art/jobs[/{id}]`、`GET /api/art/assets`、`GET /api/art/history`、`GET /art/{file}`（本世界 sprites → 打包套件 fallback）、`GET /studio` 美术工坊页；网关新增 `/art` `/studio` 反代
+- **游玩页接线**：`/api/game/status` 的 pixel 载荷优先用本世界 `plan.json` 素材（hero/monster/三类列表 + palette_hex），无规划回落 detectPixelTheme 打包套件——game.html 与 GamePage.svelte 零改动自动生效
+- **前端**：`wsweb/studio.html`（自包含美术工坊页：服务配置+连通测试 / 规划表编辑 / 批量+单品生成 / 素材画廊，embed 进二进制）；统一外壳新增 `StudioPanel.svelte`（侧栏概览+生成入口）与「美术工坊」Tab（iframe 内嵌 /studio）
+- **世界书模板**：`_template.md` 增可选「美术设定」段（视觉基调/主角外观/调色板/标志性场景——规划 Agent 最高优先）；LLM 生成世界书时自动附带 3~5 行美术段（worldbook_gen.go）
+
+### ✅ 验证
+- `go vet ./...` 通过；`internal/art` 单测全绿（合成 sheet 裁剪/空格检出/tile 整格/config 掩码与落盘/规划 JSON 容错与数量钳制/prompt 契约注入/httptest 伪中转站全流程含 UA/鉴权/b64/重试）
+- **真实 E2E**（中转站实图）：规划 Agent 从世界书《九州·凡尘仙途》产出完整规划（主角林砚带中文速写+英文 prompt）→ 实生成 items sheet → 自动裁剪出 24 个透明 sprite（角 alpha=0/主体 alpha=255）→ `/art/item-1.png` HTTP 200 → `/api/game/status` 返回 custom pixel 载荷 → `art/history.json` 留痕；PUT 编辑回读一致；网关 /studio /art 200
+
 ## [1.6.0] - 2026-08-05
 
 ### ✨ 新增

@@ -32,6 +32,7 @@ type Worldbook struct {
 	B4Foreshadows     string // 隐藏伏笔清单（导演内部）
 	B5EventPool       string // 事件谱（本世界会发生的事，事件生成器的弹药库）
 	GameAttrsRaw      string // 游玩属性（Play Mode 数据层默认：- 属性名: 数值；世界书数据驱动，代码不硬编码）
+	ArtSection        string // 美术设定（可选：角色外观速写/主视觉场景/调色板；美术工坊规划 Agent 优先读此段）
 	CNarrative        string // 叙事约束（小说化专属）
 	C0Tone            string // 题材基调（C0，世界→小说播种的题材基调注入）
 	DSafety           string // 内容安全边界
@@ -151,6 +152,8 @@ func Parse(raw string) *Worldbook {
 			w.DSafety = body
 		case "PLAY_ATTRS":
 			w.GameAttrsRaw = body
+		case "ART":
+			w.ArtSection = body
 		}
 	}
 
@@ -190,6 +193,14 @@ func Parse(raw string) *Worldbook {
 				flushE()
 				collect(prevSec)
 				prevSec = "PLAY_ATTRS"
+				current = []string{}
+				continue
+			}
+			// 美术设定段（美术工坊可选输入：外观速写/主视觉/调色板）独立记名收集
+			if strings.Contains(trimmed, "美术") {
+				flushE()
+				collect(prevSec)
+				prevSec = "ART"
 				current = []string{}
 				continue
 			}
