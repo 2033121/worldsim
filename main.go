@@ -195,6 +195,7 @@ type worldInstance struct {
 	attach   *attach.Store  // 世界参考资料附件存储（worlds/{世界名}/attachments/）
 	game     *game.Game     // 文字游戏游玩会话（worlds/{世界名}/game.json）
 	gameOnce sync.Once      // 懒加载 game 会话
+	wiSticky map[string]int // W1 动态条目 sticky 状态（关键词命中后的跨回合保持）
 }
 
 func (w *worldInstance) ready() bool { return w != nil && w.engine != nil }
@@ -254,6 +255,10 @@ func startWorldServer(worldDir string, apiCfg *config.APIConfig, ra *research.Ag
 	mux.HandleFunc("GET /api/art/jobs", ws.handleArtJobs)
 	mux.HandleFunc("GET /api/art/assets", ws.handleArtAssets)
 	mux.HandleFunc("GET /api/art/history", ws.handleArtHistory)
+
+	// 世界卡：导出/导入（v1.9.0，模板生态——用户的世界整卡带走）
+	mux.HandleFunc("GET /api/world/card", ws.handleWorldCardExport)
+	mux.HandleFunc("POST /api/worlds/import", ws.handleWorldCardImport)
 
 	// 世界参考资料附件：上传 / 列表 / 删除
 	mux.HandleFunc("POST /api/world/attach/upload", ws.handleAttachUpload)

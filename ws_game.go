@@ -28,6 +28,7 @@ import (
 
 	"worldsim/internal/engine"
 	game "worldsim/internal/game"
+	"worldsim/internal/worldbook"
 )
 
 func (w *worldInstance) lazyGame() *game.Game {
@@ -38,7 +39,7 @@ func (w *worldInstance) lazyGame() *game.Game {
 }
 
 // gameCtx 拼装世界上下文包（裁判/叙述者共用）：主角引擎快照 + 在场角色 + 最近编年史
-func (w *worldInstance) gameCtx() string {
+func (w *worldInstance) gameCtx(extra ...string) string {
 	if w == nil || w.engine == nil {
 		return "（引擎未加载）"
 	}
@@ -91,7 +92,41 @@ func (w *worldInstance) gameCtx() string {
 			tries--
 		}
 	}
+	// W1 动态条目（关键词触发 lore）：扫描最近回合文本+本回合输入，命中/sticky 注入裁判+叙述者共享上下文
+	if w.wb != nil && len(w.wb.WIEntries) > 0 && w.game != nil && w.game.StateCurrent().Enabled {
+		buf := wiScanBuffer(w.game) + strings.Join(extra, " ")
+		if w.wiSticky == nil {
+			w.wiSticky = map[string]int{}
+		}
+		if hits := worldbook.ActivateWI(w.wb.WIEntries, buf, w.wiSticky, 1200, 3); len(hits) > 0 {
+			fmt.Printf(" [游戏] WI 动态情报注入 %d 条：%s\n", len(hits), (func() string {
+				ks := []string{}
+				for _, e := range hits {
+					ks = append(ks, strings.Join(e.Keys, ","))
+				}
+				return strings.Join(ks, " / ")
+			})())
+			b.WriteString("动态情报（按最近剧情关键词触发）：\n")
+			for _, e := range hits {
+				b.WriteString("- " + e.Content + "\n")
+			}
+		}
+	}
 	return b.String()
+}
+
+// wiScanBuffer 扫描缓冲：最近 6 条回合的输入+叙述（控上下文，等价 ST 的 scan depth）
+func wiScanBuffer(g *game.Game) string {
+	log := g.StateCurrent().Log
+	start := 0
+	if len(log) > 6 {
+		start = len(log) - 6
+	}
+	var parts []string
+	for _, e := range log[start:] {
+		parts = append(parts, e.Input, e.Narration)
+	}
+	return strings.Join(parts, " ")
 }
 
 // POST /api/game/start — 进入游玩模式
@@ -179,7 +214,7 @@ func (ws *worldServer) handleGameAction(w http.ResponseWriter, r *http.Request) 
 	// 独立 context：客户端断连不影响回合完成
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 	defer cancel()
-	narr, err := g.Turn(ctx, callerFrom(inst), day, req.Input, req.Mode, inst.gameCtx())
+	narr, err := g.Turn(ctx, callerFrom(inst), day, req.Input, req.Mode, inst.gameCtx(req.Input))
 	if err != nil {
 		ws.writeJSON(w, 500, map[string]any{"ok": false, "error": err.Error()})
 		return
@@ -266,6 +301,28 @@ func (ws *worldServer) handleGameStatus(w http.ResponseWriter, r *http.Request) 
 			resp["entity"] = e
 		}
 		resp["day"] = inst.engine.State().Day
+	}
+	// 世界观感扩展（v1.9.0）：场景横幅/在场头像/物品图标/确定性地图——素材缺失时字段缺省
+	if g.Relations != nil {
+		resp["relations"] = g.Relations
+	}
+	day := 0
+	if inst.engine != nil {
+		day = inst.engine.State().Day
+	}
+	if scene := sceneURLFor(inst, day); scene != "" {
+		resp["scene"] = scene
+	}
+	if portraits := presentPortraits(inst); len(portraits) > 0 {
+		resp["portraits"] = portraits
+	}
+	if icons := inventoryIcons(inst, &g); len(icons) > 0 {
+		resp["item_icons"] = icons
+	}
+	if inst.engine != nil {
+		if m := mapLayout(inst, &g); m != nil {
+			resp["map"] = m
+		}
 	}
 	ws.writeJSON(w, 200, resp)
 }

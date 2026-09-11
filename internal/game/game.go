@@ -56,10 +56,11 @@ type GameState struct {
 	Level   int            `json:"level"`
 	Gold    int            `json:"gold"`
 	// Inventory 背包（worldbook/主题包驱动的资产语义保留在引擎 Assets 侧；此处是玩家随身直观背包）
-	Inventory []string  `json:"inventory,omitempty"`
-	Location  string    `json:"location,omitempty"`
-	Quest     string    `json:"quest,omitempty"`
-	Log       []TurnLog `json:"log"` // 最近 200 条
+	Inventory []string       `json:"inventory,omitempty"`
+	Location  string         `json:"location,omitempty"`
+	Quest     string         `json:"quest,omitempty"`
+	Relations map[string]int `json:"relations,omitempty"` // 好感度（-10..10，裁判申报、代码收数钳制）
+	Log       []TurnLog      `json:"log"`                 // 最近 200 条
 }
 
 // 出生/兜底/上限常量
@@ -270,9 +271,16 @@ func (g *Game) Start(ctx context.Context, llm Caller, worldName, worldDesc, hero
 	return scene, nil
 }
 
+// RelDelta 好感度申报（在场 NPC 与玩家互动引起的情绪变化）
+type RelDelta struct {
+	Name  string `json:"name"`
+	Delta int    `json:"delta"`
+}
+
 // refereeOutput 裁判返回的结构
 type refereeOutput struct {
 	Intent          string         `json:"intent"`
+	Relations       []RelDelta     `json:"relations,omitempty"`
 	Ability         string         `json:"ability"`
 	DC              int            `json:"dc"`
 	HPDelta         int            `json:"hp_delta"`
@@ -297,7 +305,8 @@ const refereeSys = `你是文字游戏的裁判（数值层管理者，规则先
  "inventory_add":["新增物品"],"inventory_remove":["移除物品"],
  "location":"若玩家移动，新地点名；否则空串",
  "quest":"任务/目标更新一句话，否则空串",
- "world_beat":"世界时钟推进：非玩家角色/环境在本回合发生了什么（1-2句，没有就空串）"}`
+ "world_beat":"世界时钟推进：非玩家角色/环境在本回合发生了什么（1-2句，没有就空串）",
+ "relations":[{"name":"本回合互动过的在场NPC名","delta":<-10~10的情绪变化，无互动则不传>}]}`
 
 // Turn 一回合。ctxText=世界上下文包（main.go 拼装：主角引擎快照/在场NPC/最近叙事）。
 func (g *Game) Turn(ctx context.Context, llm Caller, day int, input, mode, ctxText string) (string, error) {
@@ -375,6 +384,25 @@ func (g *Game) Turn(ctx context.Context, llm Caller, day int, input, mode, ctxTe
 	if verdict.Quest != "" {
 		g.state.Quest = verdict.Quest
 	}
+	relNote := ""
+	for _, rd := range verdict.Relations {
+		name := strings.TrimSpace(rd.Name)
+		if name == "" {
+			continue
+		}
+		if g.state.Relations == nil {
+			g.state.Relations = map[string]int{}
+		}
+		cur := g.state.Relations[name] + rd.Delta
+		if cur > 10 {
+			cur = 10
+		}
+		if cur < -10 {
+			cur = -10
+		}
+		g.state.Relations[name] = cur
+		relNote += fmt.Sprintf("；好感度[%s]%+d→%d", name, rd.Delta, cur)
+	}
 	levelNote := g.state.clamp()
 
 	// ---------- 4. 叙述者：既定结果 → 第二人称叙事 ----------
@@ -392,6 +420,9 @@ func (g *Game) Turn(ctx context.Context, llm Caller, day int, input, mode, ctxTe
 	}
 	if verdict.Quest != "" {
 		settle += fmt.Sprintf("；任务→%q", verdict.Quest)
+	}
+	if relNote != "" {
+		settle += relNote
 	}
 	narrSys := "你是文字游戏的叙述者。把裁判的既定结果写成第二人称游戏叙事，90-220字：直接回应玩家输入；" +
 		"然后写世界反应（把 NPC/环境动态融进叙事或以「与此同时——」带出）；失败就写失败的代价；" +

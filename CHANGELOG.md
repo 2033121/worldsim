@@ -2,6 +2,22 @@
 
 本项目所有重要变更都记录在此。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [1.9.0] - 2026-09-12
+
+### ✨ 新增（游玩页世界观感 + 世界卡：同类项目调研落地）
+> 调研结论见 `docs/同类项目调研-v1.9.md`（SillyTavern World Info / talemate / ST 状态追踪扩展生态）
+
+- **W1 动态条目引擎**（借鉴 SillyTavern World Info 最小实用集）：世界书新增 `## W1 动态条目` 段（`- keys => 情报`，中英文逗号分隔），游玩模式每回合把**最近 6 条回合文本+本回合输入**拼成扫描缓冲，命中（**中文子串匹配**——ST 文档明示 whole-word 毁 CJK）或 sticky（命中后保持 3 回合，重复不刷新计时）即注入裁判+叙述者共享上下文；总预算 1200 字符；解析进 `worldbook.WIEntries`，激活器 `worldbook.ActivateWI` 纯函数可测
+- **好感度追踪**（借鉴 BetterSimTracker 生态）：`game.json` 增 `relations:{NPC:-10..10}`；裁判申报 JSON 增可选 `relations:[{name,delta}]`，代码收数钳制；游玩面板角色头像带好感度徽标
+- **游玩页视觉升级**（`/game` 终端页 + GamePage.svelte 同步）：①场景横幅按世界时钟 day%3 轮转晨/暮/夜三联 ②在场角色头像条（characters sprite + 好感度徽标）③背包物品图标网格（plan/套件素材按名字精确/子串/hash 匹配）④**确定性地图视图**：引擎实体地点集合 → 排序+snake 网格布局，tile 序号按 plan kind 语义 → 地名关键词 → hash 三级兜底（同 state 两次渲染逐格一致，单测锁定），主角格高亮
+- **世界卡导出/导入**（模板生态闭环）：`GET /api/world/card[?with_game=1]` → zip（worldbook.md + art/plan.json + sheets + sprites，编年史/记忆不导出——隐私边界）；`POST /api/worlds/import` multipart 上传 → 重名自动 -2 后缀落盘新世界并选中；stdlib archive/zip 零依赖
+- **status 扩展字段**：`scene` / `portraits[{name,img,relation}]` / `item_icons[{name,img}]` / `map{side,cells,hero,npcs,base}`——素材缺失时字段缺省优雅降级
+- `worldbooks/_template.md` 增 W1 段用法说明；`docs/同类项目调研-v1.9.md` 全量调研记录
+
+### ✅ 验证
+- 单测全绿：`ActivateWI`（子串命中/sticky 保持与衰减/预算裁剪）、好感度（申报/越界钳制/持久化）、地图纯函数（关键词映射/hash 稳定性/素材匹配）
+- **真实 E2E**（真回合×4）：W1 注入日志 `[游戏] WI 动态情报注入 3 条`（2 条 sticky 保持+1 条本回合命中）；裁判自动申报好感度 `童恒+1` 落盘；`/api/game/status` 返回 scene/map(3×3,7 地点,hero 定位)/portraits；世界卡导出 3.7MB（27 文件）→ 导入生成 `凡尘仙途测试-2`（worldbook+24 sprite+plan 落盘，可选中可玩）
+
 ## [1.8.0] - 2026-09-12
 
 ### ✨ 新增（美术工坊：世界书驱动的内建图片生成）

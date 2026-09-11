@@ -14,28 +14,29 @@ import (
 
 type Worldbook struct {
 	Title             string
-	A1Worldview       string // 世界观（含隐藏真相部分）
-	A2Physics         string // 物理/超自然规则（L1）
-	A3Society         string // 社会结构（L2）
-	A4Geography       string // 地理（L3）
-	A5Factions        string // 势力速览（明面部分）
-	A6GoalChain       string // 主角目标链（长期/阶段/即时，网文引擎）
-	A7PowerSys        string // 能力成长体系（等级/解锁/升级时刻，网文引擎）
-	A8Villain         string // 反派行动线（谁在动/怎么压迫，网文引擎）
-	A9GoldenFinger    string // 金手指设计（稀缺性/代价性/成长性+展示五步，网文DNA）
-	A10PayoffRhythm   string // 爽点循环规划（四类爽点交替+密度表+首次爽点时机，网文DNA）
-	A11MapProgression string // 地图阶梯（2~4阶段+每阶段境界门槛+爽点重置，网文DNA）
-	A12FaceSlapCycle  string // 打脸周期表（被压迫→打脸→展示 的周期安排，网文DNA）
-	B1Secrets         string // 世界秘密（L5）
-	B2EventPool       string // 事件类型池（导演内部）
-	B3ArcPlan         string // 全书弧线建议（导演内部）
-	B4Foreshadows     string // 隐藏伏笔清单（导演内部）
-	B5EventPool       string // 事件谱（本世界会发生的事，事件生成器的弹药库）
-	GameAttrsRaw      string // 游玩属性（Play Mode 数据层默认：- 属性名: 数值；世界书数据驱动，代码不硬编码）
-	ArtSection        string // 美术设定（可选：角色外观速写/主视觉场景/调色板；美术工坊规划 Agent 优先读此段）
-	CNarrative        string // 叙事约束（小说化专属）
-	C0Tone            string // 题材基调（C0，世界→小说播种的题材基调注入）
-	DSafety           string // 内容安全边界
+	A1Worldview       string    // 世界观（含隐藏真相部分）
+	A2Physics         string    // 物理/超自然规则（L1）
+	A3Society         string    // 社会结构（L2）
+	A4Geography       string    // 地理（L3）
+	A5Factions        string    // 势力速览（明面部分）
+	A6GoalChain       string    // 主角目标链（长期/阶段/即时，网文引擎）
+	A7PowerSys        string    // 能力成长体系（等级/解锁/升级时刻，网文引擎）
+	A8Villain         string    // 反派行动线（谁在动/怎么压迫，网文引擎）
+	A9GoldenFinger    string    // 金手指设计（稀缺性/代价性/成长性+展示五步，网文DNA）
+	A10PayoffRhythm   string    // 爽点循环规划（四类爽点交替+密度表+首次爽点时机，网文DNA）
+	A11MapProgression string    // 地图阶梯（2~4阶段+每阶段境界门槛+爽点重置，网文DNA）
+	A12FaceSlapCycle  string    // 打脸周期表（被压迫→打脸→展示 的周期安排，网文DNA）
+	B1Secrets         string    // 世界秘密（L5）
+	B2EventPool       string    // 事件类型池（导演内部）
+	B3ArcPlan         string    // 全书弧线建议（导演内部）
+	B4Foreshadows     string    // 隐藏伏笔清单（导演内部）
+	B5EventPool       string    // 事件谱（本世界会发生的事，事件生成器的弹药库）
+	GameAttrsRaw      string    // 游玩属性（Play Mode 数据层默认：- 属性名: 数值；世界书数据驱动，代码不硬编码）
+	ArtSection        string    // 美术设定（可选：角色外观速写/主视觉场景/调色板；美术工坊规划 Agent 优先读此段）
+	WIEntries         []WIEntry // W1 动态条目（关键词触发 lore：keys → 内容；游玩模式每回合按最近文本动态注入）
+	CNarrative        string    // 叙事约束（小说化专属）
+	C0Tone            string    // 题材基调（C0，世界→小说播种的题材基调注入）
+	DSafety           string    // 内容安全边界
 	Raw               string
 	// 深层世界观层（E段：世界一开始就很大，随时间渐进揭示——冰山理论）
 	DeferredLayers []DeferredLayer
@@ -51,6 +52,13 @@ type DeferredLayer struct {
 	EventHint string `json:"event_hint"` // 事件型的触发线索（注入事件Agent）
 	Content   string `json:"content"`
 	Revealed  bool   `json:"revealed"`
+}
+
+// WIEntry W1 动态条目：keys 命中最近回合文本时，Content 注入裁判/叙述者上下文。
+// keys 用子串匹配（中文友好——whole-word 匹配对 CJK 有害，SillyTavern 文档实锤）。
+type WIEntry struct {
+	Keys    []string `json:"keys"`
+	Content string   `json:"content"`
 }
 
 // Load 从 Markdown 文件加载世界书（按 "## A1 标题" 等二级标题切分）
@@ -154,6 +162,8 @@ func Parse(raw string) *Worldbook {
 			w.GameAttrsRaw = body
 		case "ART":
 			w.ArtSection = body
+		case "W1":
+			w.WIEntries = ParseWIEntries(body)
 		}
 	}
 
@@ -201,6 +211,14 @@ func Parse(raw string) *Worldbook {
 				flushE()
 				collect(prevSec)
 				prevSec = "ART"
+				current = []string{}
+				continue
+			}
+			// W1 动态条目段（关键词触发 lore，游玩模式注入）独立记名收集
+			if strings.Contains(trimmed, "动态条目") {
+				flushE()
+				collect(prevSec)
+				prevSec = "W1"
 				current = []string{}
 				continue
 			}
@@ -552,4 +570,106 @@ func (w *Worldbook) GameAttrs() map[string]int {
 // Safety 内容安全边界（所有 Agent 的行为约束）
 func (w *Worldbook) Safety() string {
 	return w.DSafety
+}
+
+// ---------- W1 动态条目（关键词触发 lore，借鉴 SillyTavern World Info 的最小实用集） ----------
+
+// ParseWIEntries 解析 W1 段正文。每条一个列表项：
+//   - 灵石,灵石坊 => 灵石坊是青牛镇唯一的灵石交易点……
+//
+// keys 支持中文/英文逗号分隔；分隔符依次尝试 "=>" "->" "::"；纯子串匹配（CJK 友好）。
+func ParseWIEntries(body string) []WIEntry {
+	var out []WIEntry
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || !strings.HasPrefix(line, "-") {
+			continue
+		}
+		line = strings.TrimLeft(line, "-")
+		line = strings.TrimSpace(line)
+		sep := -1
+		seplen := 0
+		for _, s := range []string{"=>", "->", "::"} {
+			if i := strings.Index(line, s); i >= 0 && (sep < 0 || i < sep) {
+				sep = i
+				seplen = len(s)
+			}
+		}
+		if sep < 0 {
+			continue
+		}
+		keysPart := strings.TrimSpace(line[:sep])
+		content := strings.TrimSpace(line[sep+seplen:])
+		if keysPart == "" || content == "" {
+			continue
+		}
+		keys := strings.FieldsFunc(keysPart, func(r rune) bool {
+			return r == ',' || r == '，' || r == '|' || r == '｜'
+		})
+		clean := make([]string, 0, len(keys))
+		for _, k := range keys {
+			k = strings.TrimSpace(k)
+			if k != "" {
+				clean = append(clean, k)
+			}
+		}
+		if len(clean) == 0 {
+			continue
+		}
+		out = append(out, WIEntry{Keys: clean, Content: content})
+	}
+	return out
+}
+
+// ActivateWI 关键词激活：buffer=最近回合文本（已 lowercase）；sticky=条目→剩余回合数（跨回合保持）。
+// 命中（子串匹配）或 sticky>0 的条目入选；入选条目 sticky 置 stickyTurns；其余 sticky 递减。
+// 按 entries 顺序累计内容，超出 budget（字符数）截断——条目内容完整保留或整体放弃。
+func ActivateWI(entries []WIEntry, buffer string, sticky map[string]int, budget, stickyTurns int) []WIEntry {
+	if len(entries) == 0 {
+		return nil
+	}
+	lower := strings.ToLower(buffer)
+	// 1) 判定命中：关键词命中（fresh）或 sticky 保持中
+	matched := make([]bool, len(entries))
+	fresh := make([]bool, len(entries))
+	for i, e := range entries {
+		for _, k := range e.Keys {
+			if k != "" && strings.Contains(lower, strings.ToLower(k)) {
+				matched[i] = true
+				fresh[i] = true
+				break
+			}
+		}
+		if !matched[i] && sticky[wiKey(e)] > 0 {
+			matched[i] = true // sticky 保持（不刷新计时的 ST 语义）
+		}
+	}
+	// 2) sticky 衰减：全部递减，只给"本回合关键词命中"的条目重置保持期
+	for k, v := range sticky {
+		if v > 0 {
+			sticky[k] = v - 1
+		}
+	}
+	// 3) 预算内按序组装
+	out := make([]WIEntry, 0, len(entries))
+	used := 0
+	for i, e := range entries {
+		if !matched[i] {
+			continue
+		}
+		if used+len(e.Content) > budget {
+			continue // 超预算整体放弃该条，继续看更小的
+		}
+		used += len(e.Content)
+		if fresh[i] {
+			sticky[wiKey(e)] = stickyTurns
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// wiKey 条目唯一键（以 keys 联合标识）
+func wiKey(e WIEntry) string {
+	return strings.Join(e.Keys, "|")
 }

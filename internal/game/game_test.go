@@ -151,3 +151,35 @@ func TestParseJSONTolerant(t *testing.T) {
 		t.Fatal("should be nil")
 	}
 }
+
+// ---------- v1.9.0 好感度追踪 ----------
+
+func TestTurnRelations(t *testing.T) {
+	dir := t.TempDir()
+	g := Load(dir)
+	if _, err := g.Start(context.Background(), nil, "测试界", "测试", "阿测", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	verdict := `{"intent":"请童恒喝酒","ability":"","dc":0,"relations":[{"name":"童恒","delta":2},{"name":"黑心掌柜","delta":-5}]}`
+	if _, err := g.Turn(context.Background(), mockLLM(verdict), 3, "向童恒打听灵石坊", "say", "无"); err != nil {
+		t.Fatal(err)
+	}
+	st := g.StateCurrent()
+	if st.Relations["童恒"] != 2 || st.Relations["黑心掌柜"] != -5 {
+		t.Fatalf("relations not applied: %v", st.Relations)
+	}
+	// 越界钳制
+	verdict2 := `{"intent":"狂刷好感","relations":[{"name":"童恒","delta":50},{"name":"宿敌","delta":-99}]}`
+	if _, err := g.Turn(context.Background(), mockLLM(verdict2), 4, "继续套话", "say", "无"); err != nil {
+		t.Fatal(err)
+	}
+	st = g.StateCurrent()
+	if st.Relations["童恒"] != 10 || st.Relations["宿敌"] != -10 {
+		t.Fatalf("relations clamp wrong: %v", st.Relations)
+	}
+	// 持久化
+	g2 := Load(dir)
+	if g2.StateCurrent().Relations["童恒"] != 10 {
+		t.Fatalf("relations not persisted: %v", g2.StateCurrent().Relations)
+	}
+}

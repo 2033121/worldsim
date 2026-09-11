@@ -12,6 +12,10 @@
   let started = false;
   let heroSrc = '';
   let pixel = null;
+  let sceneSrc = '';
+  let portraits = [];
+  let itemIcons = [];
+  let mapData = null;
 
   async function load() {
     try {
@@ -19,6 +23,10 @@
       if (r && r.game) {
         state = r.game;
         pixel = r.pixel || null;
+        sceneSrc = r.scene || '';
+        portraits = r.portraits || [];
+        itemIcons = r.item_icons || [];
+        mapData = r.map || null;
         turns = (state.log || []).map((e) => ({
           who: e.mode === 'start' ? '开场' : `你(${e.mode})`,
           text: e.mode === 'start' ? e.narration : e.input,
@@ -49,6 +57,16 @@
         const last = (state.log || []).slice(-1)[0];
         turns = [...turns, { who: '世界', text: r.narration, reply: '', check: last && last.check }];
         if (last && last.check && !last.check.success && pixel && pixel.monster) heroSrc = pixel.monster;
+        try {
+          const fresh = await gameApi('/api/game/status');
+          if (fresh && fresh.ok) {
+            sceneSrc = fresh.scene || '';
+            portraits = fresh.portraits || [];
+            itemIcons = fresh.item_icons || [];
+            mapData = fresh.map || null;
+            if (fresh.game) state = fresh.game;
+          }
+        } catch (_e) { /* 刷新失败不阻塞回合 */ }
       } else {
         turns = [...turns, { who: '系统', text: r.error || '未知错误', reply: '', check: null }];
       }
@@ -116,6 +134,11 @@
     </div>
 
     {#if started && state}
+      <!-- 场景横幅（晨/暮/夜按世界时钟轮转） -->
+      {#if sceneSrc}
+        <img src={sceneSrc} alt="场景" class="mt-4 w-full rounded-lg border border-base-content/10 object-cover" style="max-height:120px;image-rendering:pixelated" onerror={() => (sceneSrc = '')} />
+      {/if}
+
       <!-- 面板 -->
       <div class="flex flex-wrap gap-2 mt-4 text-sm">
         <span class="badge bg-primary/10 text-primary">LV {state.level}</span>
@@ -130,12 +153,50 @@
         📍 {state.location || '—'} ｜ 🎯 {state.quest || '—'} ｜ 🎒 {(state.inventory || []).length ? state.inventory.join('、') : '（空）'}
       </div>
 
-      <!-- 像素主角/怪物（按世界主题自动加载） -->
-      {#if heroSrc}
-        <div class="mt-3 flex items-end gap-3">
-          <img src={heroSrc} alt="主角" style="height:96px;image-rendering:pixelated" onerror={() => (heroSrc = '')} />
-          {#if pixel && pixel.theme}<span class="text-xs opacity-50">像素套件主题：{pixel.theme}</span>{/if}
+      <!-- 像素主角/怪物 + 在场角色头像（美术工坊素材） -->
+      {#if heroSrc || portraits.length}
+        <div class="mt-3 flex items-end gap-3 flex-wrap">
+          {#if heroSrc}<img src={heroSrc} alt="主角" style="height:96px;image-rendering:pixelated" onerror={() => (heroSrc = '')} />{/if}
+          {#each portraits as p (p.name)}
+            <div class="text-center">
+              {#if p.img}<img src={p.img} alt={p.name} style="height:56px;image-rendering:pixelated" class="rounded-full" onerror={() => (p.img = '')} />{/if}
+              <div class="text-xs mt-1">{p.name}{#if p.relation !== undefined}<span class="ml-1 {p.relation > 0 ? 'text-success' : p.relation < 0 ? 'text-error' : 'opacity-50'}">{p.relation > 0 ? '+' : ''}{p.relation}</span>{/if}</div>
+            </div>
+          {/each}
+          {#if pixel && pixel.theme}<span class="text-xs opacity-50 self-end">主题：{pixel.theme}</span>{/if}
         </div>
+      {/if}
+
+      <!-- 背包（物品图 + 名称） -->
+      {#if (itemIcons && itemIcons.length) || (state.inventory || []).length}
+        <div class="mt-2 flex flex-wrap gap-1.5">
+          {#each (itemIcons.length ? itemIcons : (state.inventory || []).map((n) => ({ name: n }))) as it}
+            <span class="badge badge-ghost gap-1 py-1 pr-2">
+              {#if it.img}<img src={it.img} alt="" style="width:22px;height:22px;image-rendering:pixelated;border-radius:4px" onerror={() => (it.img = '')} />{/if}
+              {it.name}
+            </span>
+          {/each}
+        </div>
+      {/if}
+
+      <!-- 确定性地图（tile 渲染） -->
+      {#if mapData && mapData.cells && mapData.cells.length}
+        <details class="mt-3">
+          <summary class="text-xs opacity-60 cursor-pointer">🗺 世界地图（确定性布局 · tile 渲染）</summary>
+          <div class="mt-2 grid gap-0.5 w-fit" style="grid-template-columns: repeat({mapData.side}, 64px)">
+            {#each mapData.cells as c (c.name)}
+              <div
+                class="relative rounded {c.x === mapData.hero.x && c.y === mapData.hero.y ? 'outline outline-2 outline-primary' : 'outline outline-1 outline-base-content/10'}"
+                style="width:64px;height:64px;background-image:url('{(mapData.base || '/art/') || ''}tile-{c.tile}.png');background-size:cover;image-rendering:pixelated;background-color:#181f27"
+                title={c.name}
+              >
+                {#if c.x === mapData.hero.x && c.y === mapData.hero.y}
+                  <span class="absolute inset-0 flex items-center justify-center text-base">🧍</span>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        </details>
       {/if}
 
       <!-- 账本 -->
