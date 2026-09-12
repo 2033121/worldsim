@@ -17,6 +17,10 @@ storys/
 wsdata/
 run.log
 *.log
+logs/
+llm_stats/
+selfheal/
+heartbeat.json
 
 # ===== 构建产物 =====
 worldsim

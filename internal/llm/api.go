@@ -304,14 +304,49 @@ func CallAPIMessagesSync(ctx context.Context, apiCfg *config.APIConfig, messages
 	if len(chatResp.Choices) > 0 {
 		content := chatResp.Choices[0].Message.Content
 		reasoning := chatResp.Choices[0].Message.ReasoningContent
-		// 推理模型兜底：正文为空但思考内容存在时，用思考内容回退（避免空手）
-		if strings.TrimSpace(content) == "" && reasoning != "" {
+		finish := chatResp.Choices[0].FinishReason
+		// 推理模型兜底：正文为空但思考内容存在时，用思考内容回退（避免空手）。
+		// 但 finish=length 说明预算是被思考吃光的，此时思考内容不是可用正文——
+		// 静默回退只会让上层拿到无 JSON 的垃圾并报出难懂的解析错误，直接给可操作提示。
+		if strings.TrimSpace(content) == "" && strings.TrimSpace(reasoning) != "" {
+			if finish == "length" {
+				return CompletionResult{}, fmt.Errorf("%s", reasoningBudgetHint())
+			}
 			content = reasoning
 			reasoning = ""
 		}
-		return CompletionResult{Content: content, ReasoningContent: reasoning, FinishReason: chatResp.Choices[0].FinishReason}, nil
+		if strings.TrimSpace(content) == "" {
+			return CompletionResult{}, fmt.Errorf("接口返回空正文（finish_reason=%s）：%s", finish, reasoningBudgetHint())
+		}
+		return CompletionResult{Content: content, ReasoningContent: reasoning, FinishReason: finish}, nil
 	}
 	return CompletionResult{}, fmt.Errorf("接口未响应有效 Choices 文本")
+}
+
+// mergeExtraBody 把 api.json 的 extra_body 原样并入请求体顶层（新增/覆盖键）。
+// 合并失败时原样返回，绝不让可选增强破坏主链路。
+func mergeExtraBody(bts []byte, extra map[string]any) []byte {
+	if len(extra) == 0 {
+		return bts
+	}
+	var m map[string]any
+	if err := json.Unmarshal(bts, &m); err != nil {
+		return bts
+	}
+	for k, v := range extra {
+		m[k] = v
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		return bts
+	}
+	return out
+}
+
+// reasoningBudgetHint 推理模型把 max_tokens 烧在思考通道、正文为空时的统一可操作提示
+func reasoningBudgetHint() string {
+	return "模型把 max_tokens 用尽在思考上（finish_reason=length，正文为空）：" +
+		"请提高 api.json 的 max_tokens（建议 ≥32000），或加 \"extra_body\": {\"enable_thinking\": false} 关闭思考通道"
 }
 
 // contentOf 取响应首条选择的消息正文（用于 span/token 统计）
@@ -353,6 +388,7 @@ func chatOnceSync(ctx context.Context, apiCfg *config.APIConfig, messages []Mess
 	if err != nil {
 		return ChatResponse{}, err
 	}
+	bts = mergeExtraBody(bts, apiCfg.ExtraBody)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", fullURL, bytes.NewBuffer(bts))
 	if err != nil {
@@ -535,6 +571,7 @@ func CallAPIStreamMessages(ctx context.Context, apiCfg *config.APIConfig, messag
 	if err != nil {
 		return CompletionResult{}, err
 	}
+	bts = mergeExtraBody(bts, apiCfg.ExtraBody)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", fullURL, bytes.NewBuffer(bts))
 	if err != nil {
@@ -602,6 +639,9 @@ func CallAPIStreamMessages(ctx context.Context, apiCfg *config.APIConfig, messag
 
 	result := fullContent.String()
 	if result == "" {
+		if finishReason == "length" {
+			return CompletionResult{}, fmt.Errorf("流式响应为空（finish_reason=length）：%s", reasoningBudgetHint())
+		}
 		return CompletionResult{}, fmt.Errorf("流式响应为空")
 	}
 	if streamUsage != nil {

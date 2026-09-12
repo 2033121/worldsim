@@ -32,7 +32,7 @@ go build -o worldsim .        # single ~10MB binary, zero deps
 ./worldsim /path/to/data-dir  # unified entry http://localhost:48092
 ```
 
-Configure `api.json` (in the binary's directory — see Chinese README for the full schema including `model_tiers` fast/normal/premium). Then drive everything by API:
+Configure `api.json` (in the binary's directory — see Chinese README for the full schema including `model_tiers` fast/normal/premium, `max_tokens`, and `extra_body`). **Reasoning models** (e.g. `deepseek-v4.x`) spend `max_tokens` on their thinking channel first, so long JSON tasks can end with `finish_reason=length` and an **empty body**: either raise `max_tokens` to ≥32000 or add `"extra_body": {"enable_thinking": false}` to switch the thinking channel off (the contents are merged verbatim into every `chat/completions` request). The server now reports this cause explicitly instead of a cryptic JSON parse error. Then drive everything by API:
 
 ```bash
 curl -X POST localhost:48091/api/worlds/create -H 'Content-Type: application/json' \

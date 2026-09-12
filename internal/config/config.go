@@ -18,6 +18,10 @@ type APIConfig struct {
 	ContextBudgetTokens int               `json:"context_budget_tokens"` // 全书优化上下文预算，默认 900000
 	ProxyURL            string            `json:"proxy_url,omitempty"`   // 可选：HTTP CONNECT 代理。容器内经宿主直连中转站时填 http://host.docker.internal:<port>；空=直连
 	ModelTiers          map[string]string `json:"model_tiers,omitempty"` // 模型分层：fast/normal/premium → 模型名（缺省用 Model）
+	// ExtraBody 原样并入每次 chat/completions 请求体的顶层字段，例如 {"enable_thinking": false}。
+	// 用途：推理模型会把 max_tokens 大量消耗在思考通道上，长 JSON 输出（素材规划/大纲/章节等）
+	// 常见 finish_reason=length 且正文为空；关掉思考通道可显著提速并避免空正文。
+	ExtraBody map[string]any `json:"extra_body,omitempty"`
 }
 
 // TierModel 返回指定档位的模型名；未配置该档位则回退 Model

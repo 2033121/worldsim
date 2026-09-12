@@ -177,3 +177,34 @@ func TestGuessTheme(t *testing.T) {
 		}
 	}
 }
+
+// v1.10.1：场景空名按时间位确定性补名（模型常只填 time）
+func TestClampScenesNamesEmptyNames(t *testing.T) {
+	in := []PlanAsset{
+		{Name: "", Time: "morning", Look: "晨"},
+		{Name: "", Time: "dusk", Look: "暮"},
+		{Time: "night", Look: "夜"},
+	}
+	out := clampScenes(in)
+	if len(out) != 3 {
+		t.Fatalf("want 3 scenes, got %d", len(out))
+	}
+	for i, want := range []string{"晨间", "黄昏", "夜半"} {
+		if out[i].Name != want {
+			t.Fatalf("scene %d name = %q, want %q", i, out[i].Name, want)
+		}
+	}
+	// 有名字的不能被覆盖
+	out2 := clampScenes([]PlanAsset{{Name: "柳溪村夜色", Time: "night"}})
+	if out2[0].Name != "柳溪村夜色" {
+		t.Fatalf("已有名字被改写: %q", out2[0].Name)
+	}
+	if out2[1].Name != "黄昏" || out2[2].Name != "夜半" {
+		t.Fatalf("缺位补齐错误: %q %q", out2[1].Name, out2[2].Name)
+	}
+	// time 缺失时按序位补 time 再补名
+	out3 := clampScenes([]PlanAsset{{Name: ""}})
+	if out3[0].Time != "morning" || out3[0].Name != "晨间" {
+		t.Fatalf("time 缺省补位错误: %+v", out3[0])
+	}
+}

@@ -298,15 +298,25 @@ func clampAssets(list []PlanAsset, n int, kindZh string) []PlanAsset {
 
 func clampScenes(list []PlanAsset) []PlanAsset {
 	times := []string{"morning", "dusk", "night"}
+	// 场景是同一地点的晨/暮/夜三联，模型常只填 time 而把 name 留空——
+	// 空名会让工坊表格与素材匹配退化，这里按时间位确定性补名。
+	names := map[string]string{"morning": "晨间", "dusk": "黄昏", "night": "夜半"}
 	out := make([]PlanAsset, 0, 3)
 	for i := 0; i < 3; i++ {
 		if i < len(list) {
 			if list[i].Time == "" {
 				list[i].Time = times[i]
 			}
+			if strings.TrimSpace(list[i].Name) == "" {
+				if n, ok := names[list[i].Time]; ok {
+					list[i].Name = n
+				} else {
+					list[i].Name = fmt.Sprintf("场景 %d", i+1)
+				}
+			}
 			out = append(out, list[i])
 		} else {
-			out = append(out, PlanAsset{Time: times[i], Name: fmt.Sprintf("场景 %d（待补）", i+1)})
+			out = append(out, PlanAsset{Time: times[i], Name: names[times[i]]})
 		}
 	}
 	return out

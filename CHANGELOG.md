@@ -2,6 +2,30 @@
 
 本项目所有重要变更都记录在此。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [1.10.1] - 2026-09-12
+
+### 🩺 推理模型空正文陷阱（真实排障产物）
+配置世界模拟的真实 LLM 中转站时踩到：`deepseek/deepseek-v4.1-flash` 这类**带思考通道**的模型会先消耗 `max_tokens` 做推理，
+`max_tokens=8192` 时素材规划实测 `finish_reason=length` 且 `content` **完全为空**（推理吃掉全部预算），
+上层只看到 `规划 JSON 解析失败: unexpected end of JSON input` 这种难懂报错。
+
+- **可操作报错**：`internal/llm` 在同步/流式两条路径上区分「正文为空 + finish=length」与「真的空响应」，
+  直接报出 `模型把 max_tokens 用尽在思考上……请提高 max_tokens（≥32000）或加 extra_body {"enable_thinking": false}`；
+  同时保留原有的「正文空但思考存在且正常结束 → 用思考内容兜底」行为（仅当不是被截断时）
+- **`extra_body` 支持**：`api.json` 新增 `extra_body`（任意键值原样并入每次 `chat/completions` 请求体，
+  如 `{"enable_thinking": false}` 关闭思考通道）——推理模型长 JSON 任务从此可显著提速并避免空正文
+- **场景补名**：素材规划里模型常只填 `time`（morning/dusk/night）而把场景 `name` 留空，
+  `clampScenes` 现按时间位确定性补 `晨间/黄昏/夜半`（工坊表格与素材匹配不再出现空白行）
+- 文档：中英 README 的 `api.json` 段补 `max_tokens`/`extra_body` 说明与推理模型提示
+
+### ✅ 验证（真实链路）
+- 直连中转站对照实验：同提示同模型 `max_tokens=8192`（不关思考）→ `finish=length, content=0`；
+  `enable_thinking=false` → `finish=stop, content=6756 字符合法 JSON`；`max_tokens=32000` → 7740 字符合法 JSON
+- 通过 worldsim 自身链路重跑素材规划（`extra_body` 生效）：66s 产出 plan（12 人物/8 怪物/3 场景/16 地图块/24 物品），
+  场景名自动补为 `晨间/黄昏/夜半`；单张场景图生成落盘 1.78MB 并 `GET /art/scene-1.png` 200 直出，
+  `/api/game/status` 的 `scene` 字段随之指向该素材
+- 单测新增：`mergeExtraBody`（并入/覆盖/非法输入原样返回）、提示文案可操作性、`clampScenes` 补名三态
+
 ## [1.10.0] - 2026-09-12
 
 ### 🛠 全面可用性轮（审计 → 调研 → 分类改进）

@@ -78,13 +78,20 @@ go build -o worldsim .
   "model": "your-model",
   "api_key": "YOUR_API_KEY",
   "http_timeout_seconds": 300,
+  "max_tokens": 32000,
   "model_tiers": {
     "fast": "your-fast-model",
     "normal": "your-normal-model",
     "premium": "your-premium-model"
-  }
+  },
+  "extra_body": { "enable_thinking": false }
 }
 ```
+
+> **推理模型必读**：`deepseek-v4.x` 这类带思考通道的模型会把 `max_tokens` 大量消耗在推理上，
+> 长 JSON 任务（素材规划 / 大纲 / 长章节）容易 `finish_reason=length` 且**正文为空**。
+> 两条对策任选：把 `max_tokens` 提到 **≥32000**，或加 `"extra_body": {"enable_thinking": false}` 关闭思考通道
+> （`extra_body` 会原样并入每次 `chat/completions` 请求体，可用来传任意上游参数）。命中该情况时服务端会直接报出这条提示，不再抛难懂的 JSON 解析错误。
 
 ### 3. 启动
 
